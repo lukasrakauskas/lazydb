@@ -139,7 +139,10 @@ impl App {
         if self.conn_cursor >= self.config.connections.len() && self.conn_cursor > 0 {
             self.conn_cursor -= 1;
         }
-        let _ = self.config.save();
+        self.status = match self.config.save() {
+            Ok(()) => "Connection deleted.".into(),
+            Err(e) => format!("Deleted in-memory, but persist failed: {e}"),
+        };
         self.status = "Connection deleted.".into();
     }
 
@@ -185,7 +188,13 @@ impl App {
         }
         self.config.connections.push(conn);
         self.conn_cursor = self.config.connections.len() - 1;
-        let _ = self.config.save();
+        match self.config.save() {
+            Ok(()) => {
+                self.form = None;
+                self.status = "Saved. Press Enter to connect.".into();
+            }
+            Err(e) => self.status = format!("Save failed: {e}"),
+        }
         self.form = None;
         self.status = "Saved. Press Enter to connect.".into();
     }
