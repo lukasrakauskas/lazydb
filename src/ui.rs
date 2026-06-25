@@ -3,14 +3,14 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
+        Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
     },
     Frame,
 };
 
 use crate::app::{App, Focus, FormState, Output};
 
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &mut App) {
     let main_chunks =
         Layout::default().direction(Direction::Vertical).constraints([
             Constraint::Min(3),
@@ -28,22 +28,28 @@ pub fn draw(f: &mut Frame, app: &App) {
         .constraints([Constraint::Percentage(45), Constraint::Min(1)])
         .split(cols[1]);
 
-    draw_connections(f, app, cols[0]);
-    draw_editor(f, app, right[0]);
-    draw_results(f, app, right[1]);
-    draw_status(f, app, status);
+    draw_connections(f, &*app, cols[0]);
+    draw_editor(f, &*app, right[0]);
+    draw_results(f, &mut *app, right[1]);
+    draw_status(f, &*app, status);
 
     if let Some(form) = &app.form {
         draw_form(f, form, f.area());
     }
 }
 
-fn block(title: &str, focused: bool) -> Block<'_> {
+fn block<'a>(title: &'a str, num: &'a str, focused: bool) -> Block<'a> {
     let color = if focused { Color::Cyan } else { Color::DarkGray };
+    let badge_bg = if focused { Color::Cyan } else { Color::DarkGray };
     Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(color))
-        .title(title)
+        .title(Line::from(vec![
+            Span::styled(format!(" {num} "), Style::default().fg(Color::Black).bg(badge_bg)),
+            Span::raw(" "),
+            Span::raw(title.to_string()),
+        ]))
 }
 
 fn draw_connections(f: &mut Frame, app: &App, area: Rect) {
@@ -68,7 +74,7 @@ fn draw_connections(f: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let list = List::new(items)
-        .block(block("Connections", app.focus == Focus::Connections))
+        .block(block("Connections", "1", app.focus == Focus::Connections))
         .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD));
 
     let mut state = ListState::default();
@@ -79,7 +85,7 @@ fn draw_connections(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
-    let b = block("SQL Editor  (Ctrl+R / F5 to run)", app.focus == Focus::Editor);
+    let b = block("SQL Editor  (Ctrl+R / F5 to run)", "2", app.focus == Focus::Editor);
     let inner = b.inner(area);
     f.render_widget(b, area);
 
@@ -100,7 +106,8 @@ fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_results(f: &mut Frame, app: &App, area: Rect) {
+fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
+    app.results_rect = Some(area);
     let title = match &app.output {
         Output::Table { columns, rows, rows_affected, elapsed_ms } if !columns.is_empty() => {
             format!(
@@ -114,7 +121,7 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
         }
         _ => "Results".to_string(),
     };
-    let b = block(&title, app.focus == Focus::Results);
+    let b = block(&title, "3", app.focus == Focus::Results);
     let inner = b.inner(area);
     f.render_widget(b, area);
 
@@ -278,6 +285,7 @@ fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
 
     let b = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .title("New Connection  (Enter: save, Esc: cancel, Tab: next field)")
         .border_style(Style::default().fg(Color::Yellow));
     let inner = b.inner(pop);

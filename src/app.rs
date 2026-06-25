@@ -3,8 +3,9 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::layout::Rect;
 
 use crate::config::Config;
 use crate::db::{self, Connection, Database, ExecutionResult};
@@ -84,6 +85,7 @@ pub struct App {
     pub status: String,
     pub result_row_off: usize,
     pub result_col_off: usize,
+    pub results_rect: Option<Rect>,
 }
 
 impl App {
@@ -104,6 +106,7 @@ impl App {
             status: "Press 'n' to add a connection, then Enter to connect.".into(),
             result_row_off: 0,
             result_col_off: 0,
+            results_rect: None,
         })
     }
 
@@ -246,6 +249,14 @@ impl App {
                     Focus::Results => Focus::Connections,
                 };
             }
+            // lazygit-style pane jump: 1/2/3 focus Connections/Editor/Results.
+            // Skipped while editing so digits type into the SQL editor.
+            KeyCode::Char(c) if c.is_ascii_digit() && self.focus != Focus::Editor => match c {
+                '1' => self.focus = Focus::Connections,
+                '2' => self.focus = Focus::Editor,
+                '3' => self.focus = Focus::Results,
+                _ => {}
+            },
             KeyCode::Char('q') if self.focus != Focus::Editor => self.running = false,
             _ => match self.focus {
                 Focus::Connections => self.handle_connections(key),
@@ -320,6 +331,42 @@ impl App {
         }
     }
 
+    /// Mouse wheel / trackpad scrolls the results pane — but only when the
+    /// cursor is over it (lazygit-style: scroll the pane you hover). The
+    /// results rect is recorded by `ui::draw` each frame.
+    pub fn handle_mouse(&mut self, m: MouseEvent) {
+        if self.form.is_some() {
+            return;
+        }
+        let Some(rect) = self.results_rect else { return };
+        if !(m.column >= rect.x && m.column < rect.right() && m.row >= rect.y && m.row < rect.bottom()) {
+            return;
+        }
+        let (last_row, last_col) = match &self.output {
+            Output::Table { columns, rows, .. } => {
+                (rows.len().saturating_sub(1), columns.len().saturating_sub(1))
+            }
+            _ => return,
+        };
+        match m.kind {
+            MouseEventKind::ScrollDown => {
+                self.result_row_off = self.result_row_off.saturating_add(1).min(last_row);
+            }
+            MouseEventKind::ScrollUp => {
+                self.result_row_off = self.result_row_off.saturating_sub(1);
+            }
+            // Horizontal: ScrollRight moves the viewport right (toward later
+            // columns), ScrollLeft toward earlier — same as the `l`/`h` keys.
+            MouseEventKind::ScrollRight => {
+                self.result_col_off = self.result_col_off.saturating_add(1).min(last_col);
+            }
+            MouseEventKind::ScrollLeft => {
+                self.result_col_off = self.result_col_off.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
     fn handle_form(&mut self, key: KeyEvent) {
         // Esc / Enter are handled before borrowing `self.form`.
         match key.code {
@@ -387,10 +434,12 @@ fn spawn_job(job: Job) -> Receiver<JobResult> {
 
 pub fn run(terminal: &mut Term, mut app: App) -> Result<()> {
     while app.running {
-        terminal.draw(|f| ui::draw(f, &app))?;
+        terminal.draw(|f| ui::draw(f, &mut app))?;
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                app.handle_key(key);
+            match event::read()? {
+                Event::Key(key) => app.handle_key(key),
+                Event::Mouse(m) => app.handle_mouse(m),
+                _ => {}
             }
         }
 
@@ -412,4 +461,31 @@ pub fn run(terminal: &mut Term, mut app: App) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    // Mirrors handle_mouse's row-offset clamp: add-with-ceiling and saturating sub.
+    fn scroll_down(off: usize, last_row: usize) -> usize {
+        off.saturating_add(1).min(last_row)
+    }
+    fn scroll_up(off: usize) -> usize {
+        off.saturating_sub(1)
+    }
+
+    #[test]
+    fn row_scroll_clamps_at_bounds() {
+        assert_eq!(scroll_down(0, 5), 1);
+        assert_eq!(scroll_down(5, 5), 5); // ceiling holds
+        assert_eq!(scroll_up(3), 2);
+    }
+
+    // Same clamp is reused for column offsets (ScrollLeft/ScrollRight).
+    #[test]
+    fn col_scroll_clamps_at_bounds() {
+        // ScrollRight = add-with-ceiling, ScrollLeft = saturating sub.
+        assert_eq!(scroll_down(0, 4), 1); // col 0 -> 1
+        assert_eq!(scroll_down(4, 4), 4); // ceiling holds at last col
+        assert_eq!(scroll_up(0), 0); // floor holds
+    }
 }

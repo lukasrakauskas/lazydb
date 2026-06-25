@@ -26,9 +26,11 @@ cargo run -- query.sql
 | Key | Action |
 |-----|--------|
 | `Tab` | cycle focus: Connections → Editor → Results |
+| `1` / `2` / `3` | jump focus to Connections / Editor / Results (not while editing) |
 | `j`/`k`, arrows | move selection (Connections) / scroll rows (Results) |
 | `h`/`l`, ←/→ | scroll columns horizontally (Results) |
 | `PgUp`/`PgDn`, `Home`/`End` | scroll rows by page / jump (Results) |
+| mouse wheel / trackpad | scroll results vertically & horizontally (hover the Results pane) |
 | `Enter` (Connections) | connect to selected |
 | `n` | new connection form (`Enter` save, `Esc` cancel, `Tab` next field) |
 | `d` | delete selected connection |
