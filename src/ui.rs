@@ -40,13 +40,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
 fn block<'a>(title: &'a str, num: &'a str, focused: bool) -> Block<'a> {
     let color = if focused { Color::Cyan } else { Color::DarkGray };
-    let badge_bg = if focused { Color::Cyan } else { Color::DarkGray };
+    // lazygit-style plain bracket badges: [1] [2] [3] — no colored box.
+    let badge = Style::default().fg(color).add_modifier(Modifier::BOLD);
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(color))
         .title(Line::from(vec![
-            Span::styled(format!(" {num} "), Style::default().fg(Color::Black).bg(badge_bg)),
+            Span::styled(format!("[{num}]"), badge),
             Span::raw(" "),
             Span::raw(title.to_string()),
         ]))
@@ -75,7 +76,7 @@ fn draw_connections(f: &mut Frame, app: &App, area: Rect) {
 
     let list = List::new(items)
         .block(block("Connections", "1", app.focus == Focus::Connections))
-        .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD));
+        .highlight_style(Style::default().bg(Color::Gray).fg(Color::Black).add_modifier(Modifier::BOLD));
 
     let mut state = ListState::default();
     if !app.config.connections.is_empty() {
@@ -264,13 +265,13 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let conn = app.db_name.clone().unwrap_or_else(|| "not connected".into());
     let spinner = if app.running_query { " ⏳" } else { "" };
     let left = format!(" {conn}{spinner} | {} ", app.status);
-    let right = " Tab: focus  Enter: connect  n: new  d: delete  Ctrl+R: run  Results: h/j/k/l scroll  Ctrl+Q: quit ";
+    let right = " Tab: focus  Enter: connect  n: new  d: delete  Ctrl+R/S-Enter: run  Results: h/j/k/l+wheel scroll  ? key-log  Ctrl+Q: quit ";
     let line = Line::from(vec![
-        Span::styled(left, Style::default().fg(Color::Yellow)),
+        Span::raw(left),
         Span::raw(right),
     ]);
     f.render_widget(
-        Paragraph::new(line).style(Style::default().bg(Color::Black)),
+        Paragraph::new(line),
         area,
     );
 }

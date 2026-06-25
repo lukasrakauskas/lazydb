@@ -34,7 +34,7 @@ cargo run -- query.sql
 | `Enter` (Connections) | connect to selected |
 | `n` | new connection form (`Enter` save, `Esc` cancel, `Tab` next field) |
 | `d` | delete selected connection |
-| `Ctrl+R` / `F5` | run SQL in the editor |
+| `Ctrl+R` / `F5` / `Shift+Enter` | run SQL in the editor |
 | `Ctrl+Q` / `Ctrl+C` / `q`* | quit (*`q` types while in the editor) |
 
 Queries run on a background thread so the UI stays responsive.

@@ -86,6 +86,8 @@ pub struct App {
     pub result_row_off: usize,
     pub result_col_off: usize,
     pub results_rect: Option<Rect>,
+    pub debug_keys: bool,
+    pub last_key: Option<String>,
 }
 
 impl App {
@@ -107,6 +109,8 @@ impl App {
             result_row_off: 0,
             result_col_off: 0,
             results_rect: None,
+            debug_keys: false,
+            last_key: None,
         })
     }
 
@@ -237,12 +241,19 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return;
         }
+        // ponytail: key inspector — `?` toggles showing the last KeyEvent in
+        // the status bar. Lets us see what tmux actually forwards instead of
+        // guessing about Shift+Enter / Kitty-protocol passthrough.
+        self.last_key = Some(format_key_event(&key));
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         if ctrl && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('q')) {
             self.running = false;
             return;
         }
-        if ctrl && key.code == KeyCode::Char('r') || key.code == KeyCode::F(5) {
+        // Run query: Ctrl+R / F5 / Shift+Enter. Shift+Enter needs the Kitty
+        // keyboard protocol (enabled in main) to report the SHIFT modifier.
+        if (ctrl && key.code == KeyCode::Char('r')) || key.code == KeyCode::F(5) || (shift && key.code == KeyCode::Enter) {
             self.run_query();
             return;
         }
@@ -266,6 +277,7 @@ impl App {
                 '3' => self.focus = Focus::Results,
                 _ => {}
             },
+            KeyCode::Char('?') if self.focus != Focus::Editor => self.debug_keys = !self.debug_keys,
             KeyCode::Char('q') if self.focus != Focus::Editor => self.running = false,
             _ => match self.focus {
                 Focus::Connections => self.handle_connections(key),
@@ -441,6 +453,21 @@ fn spawn_job(job: Job) -> Receiver<JobResult> {
     rx
 }
 
+/// Compact one-line description of a key event for the inspector.
+fn format_key_event(key: &KeyEvent) -> String {
+    let mods = [
+        (KeyModifiers::SHIFT, "S"),
+        (KeyModifiers::CONTROL, "C"),
+        (KeyModifiers::ALT, "A"),
+        (KeyModifiers::SUPER, "U"),
+    ]
+    .iter()
+    .map(|(m, s)| if key.modifiers.contains(*m) { *s } else { "-" })
+    .collect::<Vec<_>>()
+    .join("");
+    format!("key={:?} mods={}{}", key.code, mods, if key.kind == KeyEventKind::Release { " rel" } else { "" })
+}
+
 pub fn run(terminal: &mut Term, mut app: App) -> Result<()> {
     while app.running {
         terminal.draw(|f| ui::draw(f, &mut app))?;
@@ -474,6 +501,7 @@ pub fn run(terminal: &mut Term, mut app: App) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::format_key_event;
     // Mirrors handle_mouse's row-offset clamp: add-with-ceiling and saturating sub.
     fn scroll_down(off: usize, last_row: usize) -> usize {
         off.saturating_add(1).min(last_row)
@@ -496,5 +524,22 @@ mod tests {
         assert_eq!(scroll_down(0, 4), 1); // col 0 -> 1
         assert_eq!(scroll_down(4, 4), 4); // ceiling holds at last col
         assert_eq!(scroll_up(0), 0); // floor holds
+    }
+
+    #[test]
+    fn key_event_format_reports_modifiers() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+        let shift_enter = KeyEvent::new_with_kind_and_state(
+            KeyCode::Enter,
+            KeyModifiers::SHIFT,
+            KeyEventKind::Press,
+            KeyEventState::NONE,
+        );
+        let s = format_key_event(&shift_enter);
+        assert!(s.contains("Enter"), "got: {s}");
+        assert!(s.contains("mods=S---"), "SHIFT must be S, got: {s}");
+
+        let plain = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(format_key_event(&plain).contains("mods=----"));
     }
 }
