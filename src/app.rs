@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Stdout;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
@@ -21,6 +21,23 @@ pub enum Focus {
     Connections,
     Editor,
     Results,
+    Schema,
+}
+
+/// rainfrog-style: each table expands to 4 fixed options. Selecting one
+/// generates + runs a query (prefills the editor so the user can edit it).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SchemaOpt {
+    Rows,
+    Columns,
+    Constraints,
+    Indexes,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum SchemaEntry {
+    Table(String),
+    Leaf { table: String, opt: SchemaOpt },
 }
 
 pub enum Output {
@@ -98,6 +115,8 @@ pub struct App {
     pub last_key: Option<String>,
     pub autocomplete: Option<Autocomplete>,
     pub schema: HashMap<String, Vec<String>>,
+    pub schema_cursor: usize,
+    pub schema_expanded: HashSet<String>,
     pub history: Vec<String>,
     pub history_cursor: Option<usize>,
     pub history_draft: Option<String>,
@@ -137,6 +156,8 @@ impl App {
             last_key: None,
             autocomplete: None,
             schema: HashMap::new(),
+            schema_cursor: 0,
+            schema_expanded: HashSet::new(),
             history: Vec::new(),
             history_cursor: None,
             history_draft: None,
@@ -287,6 +308,10 @@ impl App {
                 Ok(map) => {
                     let n = map.len();
                     self.schema = map;
+                    // ponytail: reset browse state so a reconnect doesn't leave
+                    // the cursor/expansion pointing at now-gone tables.
+                    self.schema_cursor = 0;
+                    self.schema_expanded.clear();
                     self.status = format!("Schema loaded: {n} tables.");
                 }
                 Err(e) => self.status = format!("Schema load failed: {e}"),
@@ -348,7 +373,8 @@ impl App {
                 self.focus = match self.focus {
                     Focus::Connections => Focus::Editor,
                     Focus::Editor => Focus::Results,
-                    Focus::Results => Focus::Connections,
+                    Focus::Results => Focus::Schema,
+                    Focus::Schema => Focus::Connections,
                 };
             }
             // lazygit-style pane jump: 1/2/3 focus Connections/Editor/Results.
@@ -359,6 +385,7 @@ impl App {
                     '1' => self.focus = Focus::Connections,
                     '2' => self.focus = Focus::Editor,
                     '3' => self.focus = Focus::Results,
+                    '4' => self.focus = Focus::Schema,
                     _ => {}
                 }
             },
@@ -372,6 +399,7 @@ impl App {
                 Focus::Connections => self.handle_connections(key),
                 Focus::Editor => self.handle_editor(key),
                 Focus::Results => self.handle_results(key),
+                Focus::Schema => self.handle_schema(key),
             },
         }
     }
@@ -624,6 +652,82 @@ impl App {
         }
     }
 
+    /// Flat display rows for the schema pane: a table row, then (when expanded)
+    /// its 4 fixed leaf options. Tables sorted for stable order.
+    /// ponytail: rebuilt each call (schema is small); shared by draw + handle.
+    pub fn schema_rows(&self) -> Vec<SchemaEntry> {
+        let mut tables: Vec<&String> = self.schema.keys().collect();
+        tables.sort();
+        let mut rows: Vec<SchemaEntry> = Vec::new();
+        for t in tables {
+            rows.push(SchemaEntry::Table(t.clone()));
+            if self.schema_expanded.contains(t) {
+                for opt in [SchemaOpt::Rows, SchemaOpt::Columns, SchemaOpt::Constraints, SchemaOpt::Indexes] {
+                    rows.push(SchemaEntry::Leaf { table: t.clone(), opt });
+                }
+            }
+        }
+        rows
+    }
+
+    /// The schema entry currently at the cursor, if any.
+    fn schema_entry_at_cursor(&self) -> Option<SchemaEntry> {
+        self.schema_rows().get(self.schema_cursor).cloned()
+    }
+
+    /// Name of the table the schema cursor currently sits on.
+    fn schema_table_at_cursor(&self) -> Option<String> {
+        match self.schema_entry_at_cursor() {
+            Some(SchemaEntry::Table(t)) => Some(t),
+            Some(SchemaEntry::Leaf { table, .. }) => Some(table),
+            None => None,
+        }
+    }
+
+    /// Move the schema cursor to the table row of `t`.
+    fn schema_cursor_to_table(&mut self, t: &str) {
+        if let Some(i) = self.schema_rows().iter().position(|e| matches!(e, SchemaEntry::Table(name) if name == t)) {
+            self.schema_cursor = i;
+        }
+    }
+
+    fn handle_schema(&mut self, key: KeyEvent) {
+        let rows = self.schema_rows();
+        if rows.is_empty() {
+            return;
+        }
+        let last = rows.len() - 1;
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.schema_cursor = self.schema_cursor.saturating_add(1).min(last);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.schema_cursor = self.schema_cursor.saturating_sub(1);
+            }
+            // Enter / l / Right: expand a table, or run a leaf's query.
+            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
+                match self.schema_entry_at_cursor() {
+                    Some(SchemaEntry::Table(t)) => { self.schema_expanded.insert(t); }
+                    Some(SchemaEntry::Leaf { table, opt }) => {
+                        let sql = schema_query(&table, opt);
+                        self.editor = Editor::from_text(sql);
+                        self.focus = Focus::Results;
+                        self.run_query();
+                    }
+                    None => {}
+                }
+            }
+            // h / Left: collapse the table at the cursor (or its parent leaf's table).
+            KeyCode::Left | KeyCode::Char('h') => {
+                if let Some(t) = self.schema_table_at_cursor() {
+                    self.schema_expanded.remove(&t);
+                    self.schema_cursor_to_table(&t);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Mouse wheel / trackpad scrolls the results pane — but only when the
     /// cursor is over it (lazygit-style: scroll the pane you hover). The
     /// results rect is recorded by `ui::draw` each frame.
@@ -764,6 +868,21 @@ fn spawn_job(job: Job) -> Receiver<JobResult> {
     rx
 }
 
+/// SQL generated for a schema-browser leaf selection. Backtick-quoted table
+/// names so SQL keywords as identifiers work. ponytail: the user sees this in
+/// the editor and can edit before re-running — no escaping of user data beyond
+/// backticks (table names come from INFORMATION_SCHEMA, not user input).
+fn schema_query(table: &str, opt: SchemaOpt) -> String {
+    match opt {
+        SchemaOpt::Rows => format!("SELECT * FROM `{table}` LIMIT 100;"),
+        SchemaOpt::Columns => format!("SHOW FULL COLUMNS FROM `{table}`;"),
+        SchemaOpt::Constraints => format!(
+            "SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table}';"
+        ),
+        SchemaOpt::Indexes => format!("SHOW INDEX FROM `{table}`;"),
+    }
+}
+
 /// Identifier immediately before byte index `end` (exclusive) on a line.
 /// Used to resolve `t.<col>` → the table name `t`.
 fn ident_before(line: &str, end: usize) -> String {
@@ -890,5 +1009,45 @@ mod tests {
         app.recall_history(false);
         assert_eq!(app.editor.text(), "draft");
         assert!(app.history_cursor.is_none());
+    }
+
+    #[test]
+    fn schema_rows_expand_to_four_options() {
+        let mut app = super::App::load().unwrap();
+        let mut schema = std::collections::HashMap::new();
+        schema.insert("users".to_string(), vec!["id".to_string()]);
+        schema.insert("posts".to_string(), vec!["id".to_string()]);
+        app.schema = schema;
+
+        // Collapsed: one row per table, sorted.
+        let rows = app.schema_rows();
+        assert_eq!(rows.len(), 2);
+        assert!(matches!(rows[0], super::SchemaEntry::Table(ref t) if t == "posts"));
+        assert!(matches!(rows[1], super::SchemaEntry::Table(ref t) if t == "users"));
+
+        // Expand users → 4 leaf options (rows/columns/constraints/indexes).
+        app.schema_expanded.insert("users".to_string());
+        let rows = app.schema_rows();
+        assert_eq!(rows.len(), 6); // posts + users + 4 leaves
+        assert!(matches!(rows[1], super::SchemaEntry::Table(ref t) if t == "users"));
+        assert!(matches!(rows[2], super::SchemaEntry::Leaf { ref table, opt: super::SchemaOpt::Rows } if table == "users"));
+        assert!(matches!(rows[3], super::SchemaEntry::Leaf { ref table, opt: super::SchemaOpt::Columns } if table == "users"));
+        assert!(matches!(rows[4], super::SchemaEntry::Leaf { ref table, opt: super::SchemaOpt::Constraints } if table == "users"));
+        assert!(matches!(rows[5], super::SchemaEntry::Leaf { ref table, opt: super::SchemaOpt::Indexes } if table == "users"));
+
+        // Collapse → back to 2 rows.
+        app.schema_expanded.remove("users");
+        assert_eq!(app.schema_rows().len(), 2);
+    }
+
+    #[test]
+    fn schema_query_generates_correct_sql() {
+        use super::{schema_query, SchemaOpt};
+        assert_eq!(schema_query("users", SchemaOpt::Rows), "SELECT * FROM `users` LIMIT 100;");
+        assert_eq!(schema_query("users", SchemaOpt::Columns), "SHOW FULL COLUMNS FROM `users`;");
+        assert_eq!(schema_query("users", SchemaOpt::Indexes), "SHOW INDEX FROM `users`;");
+        let c = schema_query("users", SchemaOpt::Constraints);
+        assert!(c.contains("TABLE_CONSTRAINTS"));
+        assert!(c.contains("TABLE_NAME = 'users'"));
     }
 }

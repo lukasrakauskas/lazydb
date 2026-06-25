@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, Focus, FormState, Output};
+use crate::app::{App, Focus, FormState, Output, SchemaEntry, SchemaOpt};
 use crate::config::Features;
 use crate::highlight;
 
@@ -31,7 +31,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .constraints([Constraint::Length(8), Constraint::Min(1)])
         .split(cols[1]);
 
-    draw_connections(f, &*app, cols[0]);
+    // ponytail: left column split — Connections (top, room for ~6 rows) +
+    // Schema browser (bottom, the rest). Right column stays editor+results.
+    let left = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(8), Constraint::Min(1)])
+        .split(cols[0]);
+    draw_connections(f, &*app, left[0]);
+    draw_schema(f, &*app, left[1]);
     draw_editor(f, &*app, right[0]);
     draw_results(f, &mut *app, right[1]);
     draw_status(f, &*app, status);
@@ -90,6 +97,48 @@ fn draw_connections(f: &mut Frame, app: &App, area: Rect) {
         state.select(Some(app.conn_cursor));
     }
     f.render_stateful_widget(list, area, &mut state);
+}
+
+fn draw_schema(f: &mut Frame, app: &App, area: Rect) {
+    let n = app.schema.len();
+    let title = format!("Schema  ·  {n} tables  (Enter: expand / run)");
+    let b = block(&title, "4", app.focus == Focus::Schema);
+    let inner = b.inner(area);
+    f.render_widget(b, area);
+
+    let rows = app.schema_rows();
+    if rows.is_empty() {
+        f.render_widget(
+            Paragraph::new("Connect to load schema.").style(Style::default().fg(Color::DarkGray)),
+            inner,
+        );
+        return;
+    }
+    let focused = app.focus == Focus::Schema;
+    let lines: Vec<Line> = rows.iter().enumerate().map(|(i, entry)| {
+        let selected = focused && i == app.schema_cursor;
+        let style = if selected {
+            Style::default().bg(Color::Cyan).fg(Color::Black)
+        } else {
+            Style::default()
+        };
+        match entry {
+            SchemaEntry::Table(t) => {
+                let mark = if app.schema_expanded.contains(t) { "▼" } else { "▶" };
+                Line::from(Span::styled(format!(" {mark} {t}"), style))
+            }
+            SchemaEntry::Leaf { opt, .. } => {
+                let label = match opt {
+                    SchemaOpt::Rows => "rows",
+                    SchemaOpt::Columns => "columns",
+                    SchemaOpt::Constraints => "constraints",
+                    SchemaOpt::Indexes => "indexes",
+                };
+                Line::from(Span::styled(format!("    {label}"), style))
+            }
+        }
+    }).collect();
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
@@ -324,7 +373,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let right = if app.debug_keys {
         format!(" {} ", app.last_key.as_deref().unwrap_or("(none)"))
     } else {
-        " Tab: focus  Enter: connect  n: new  d: delete  Ctrl+R/Opt+Enter: run  f: features  ? key-log  Ctrl+Q: quit ".to_owned()
+        " Tab: focus  Enter: connect  n: new  d: delete  4: schema  Ctrl+R/Opt+Enter: run  f: features  ? key-log  Ctrl+Q: quit ".to_owned()
     };
     let line = Line::from(vec![
         Span::raw(left),

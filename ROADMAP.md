@@ -8,7 +8,7 @@ Each note records where it plugs in and whether it fits the minimal-TUI ethos.
 - ~~**Query history**~~ ✅ done — `Ctrl+Up`/`Ctrl+Down` in the editor recalls prior SQL from
   a ring buffer in `App`. ~30 lines, no deps. Highest value-per-line for a SQL
   tool. Plugs into the existing editor + `run_query`.
-- **Schema browser pane** — the schema is already fetched (`Database::schema()`
+- ~~**Schema browser pane**~~ ✅ done — 4th focusable pane listing `tables → columns`
   on connect, used by autocomplete). A 4th focusable pane (or a `Tab`-cycled
   overlay inside Connections) listing `tables → columns` makes that data
   visible. ~60 lines; reuses loaded data.

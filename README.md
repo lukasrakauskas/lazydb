@@ -27,8 +27,8 @@ cargo run -- query.sql
 
 | Key | Action |
 |-----|--------|
-| `Tab` | cycle focus: Connections → Editor → Results |
-| `1` / `2` / `3` | jump focus to Connections / Editor / Results (not while editing) |
+| `Tab` | cycle focus: Connections → Editor → Results → Schema |
+| `1` / `2` / `3` / `4` | jump focus to Connections / Editor / Results / Schema (not while editing) |
 | `j`/`k`, arrows | move selection (Connections) / scroll rows (Results) |
 | `h`/`l`, ←/→ | scroll columns horizontally (Results) |
 | `PgUp`/`PgDn`, `Home`/`End` | scroll rows by page / jump (Results) |
@@ -37,6 +37,7 @@ cargo run -- query.sql
 | `n` | new connection form (`Enter` save, `Esc` cancel, `Tab` next field) |
 | `f` | features modal (`Space` toggle, `j/k` move, `Esc`/`f`/`q` close) — not while editing |
 | `d` | delete selected connection |
+| `Enter` / `l` (Schema) | expand table → `rows` / `columns` / `constraints` / `indexes`; selecting one prefills + runs the query · `h` collapse |
 | `Ctrl+R` / `F5` / `Option+Enter` | run SQL in the editor |
 | `Shift+Up` / `Shift+Down` | recall older / newer query (in the editor) |
 | `Ctrl+Q` / `Ctrl+C` / `q`* | quit (*`q` types while in the editor) |
