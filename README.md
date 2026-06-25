@@ -40,6 +40,8 @@ cargo run -- query.sql
 | `Enter` / `l` (Schema) | expand table → `rows` / `columns` / `constraints` / `indexes`; selecting one prefills + runs the query · `h` collapse |
 | `Ctrl+R` / `F5` / `Option+Enter` | run SQL in the editor |
 | `Shift+Up` / `Shift+Down` | recall older / newer query (in the editor) |
+| `y` (Results) | copy the selected row as JSON to the clipboard |
+| `Ctrl+S` (Results) | export the whole result set as CSV to the clipboard |
 | `Ctrl+Q` / `Ctrl+C` / `q`* | quit (*`q` types while in the editor) |
 
 Queries run on a background thread so the UI stays responsive.

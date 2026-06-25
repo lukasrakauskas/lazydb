@@ -12,7 +12,7 @@ Each note records where it plugs in and whether it fits the minimal-TUI ethos.
   on connect, used by autocomplete). A 4th focusable pane (or a `Tab`-cycled
   overlay inside Connections) listing `tables → columns` makes that data
   visible. ~60 lines; reuses loaded data.
-- **Copy row / export results** — `y` on a row copies JSON; `Ctrl+S` dumps the
+- ~~**Copy row / export results**~~ ✅ done — `y` copies the selected row as JSON; `Ctrl+S` exports the result set as CSV
   current result set to CSV/JSON. `rows: Vec<Vec<String>>` is already in
   `Output::Table`. CSV needs no dep (`std::fs` + comma join + quote-escape).
 - **EXPLAIN** — prefix the query with `EXPLAIN` via a toggle (`e`) or

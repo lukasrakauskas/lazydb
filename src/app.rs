@@ -621,6 +621,32 @@ impl App {
     }
 
     fn handle_results(&mut self, key: KeyEvent) {
+        // ponytail: y copies the selected row (result_row_off) as JSON to the
+        // clipboard; Ctrl+S exports the whole result set as CSV. Both shell out
+        // to the platform clipboard tool — see copy_to_clipboard.
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if key.code == KeyCode::Char('s') && ctrl {
+            if let Output::Table { columns, rows, .. } = &self.output {
+                let csv = result_to_csv(columns, rows);
+                match copy_to_clipboard(&csv) {
+                    Ok(()) => self.status = format!("Copied {} rows as CSV ({} bytes).", rows.len(), csv.len()),
+                    Err(e) => self.status = format!("Copy failed: {e}"),
+                }
+            }
+            return;
+        }
+        if key.code == KeyCode::Char('y') && !ctrl {
+            if let Output::Table { columns, rows, .. } = &self.output {
+                if let Some(row) = rows.get(self.result_row_off) {
+                    let json = row_to_json(columns, row);
+                    match copy_to_clipboard(&json) {
+                        Ok(()) => self.status = format!("Copied row {} as JSON.", self.result_row_off + 1),
+                        Err(e) => self.status = format!("Copy failed: {e}"),
+                    }
+                }
+            }
+            return;
+        }
         let (nrows, ncols) = match &self.output {
             Output::Table { columns, rows, .. } => (rows.len(), columns.len()),
             _ => return,
@@ -883,6 +909,123 @@ fn schema_query(table: &str, opt: SchemaOpt) -> String {
     }
 }
 
+/// Copy text to the system clipboard. ponytail: shell out to the platform
+/// clipboard tool — no new dep, works on macOS/Windows/Linux/Wayland.
+/// Returns Ok on success; the caller shows a status message either way.
+fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    // ponytail: pick the first available tool; extend the list as needed.
+    let cmd = if cfg!(target_os = "macos") {
+        ("pbcopy", Vec::<&str>::new())
+    } else if cfg!(target_os = "windows") {
+        ("clip", Vec::<&str>::new())
+    } else {
+        // Wayland then X11; wl-copy reads stdin, xclip needs -selection clipboard.
+        if std::path::Path::new("/usr/bin/wl-copy").exists() || which("wl-copy") {
+            ("wl-copy", Vec::<&str>::new())
+        } else {
+            ("xclip", vec!["-selection", "clipboard"])
+        }
+    };
+    let mut child = Command::new(cmd.0)
+        .args(&cmd.1)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(text.as_bytes())?;
+    }
+    child.wait()?;
+    Ok(())
+}
+
+/// ponytail: `which` without a dep — checks PATH for an executable.
+fn which(prog: &str) -> bool {
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in path.split(':') {
+            if std::path::Path::new(dir).join(prog).exists() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// A single result row as a JSON object: `{"col":"val",...}`.
+/// ponytail: hand-rolled JSON string escaping (no serde dep). Ascii control
+/// chars and quotes/backslashes are escaped; everything else passes through.
+fn row_to_json(columns: &[String], row: &[String]) -> String {
+    let mut out = String::from("{");
+    for (i, col) in columns.iter().enumerate() {
+        if i > 0 { out.push(','); }
+        out.push_str(&json_escape(col));
+        out.push(':');
+        let val = row.get(i).map(String::as_str).unwrap_or("");
+        out.push_str(&json_escape(val));
+    }
+    out.push('}');
+    out
+}
+
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// CSV with header + RFC4180 quoting (quote fields containing `,` `"` newline).
+/// ponytail: no csv crate — a quoting fn covers the spec's escape rules.
+fn result_to_csv(columns: &[String], rows: &[Vec<String>]) -> String {
+    let mut out = String::new();
+    let mut line = String::new();
+    for (i, c) in columns.iter().enumerate() {
+        if i > 0 { line.push(','); }
+        line.push_str(&csv_escape(c));
+    }
+    out.push_str(&line);
+    out.push('\n');
+    for row in rows {
+        line.clear();
+        for i in 0..columns.len() {
+            if i > 0 { line.push(','); }
+            // columns beyond the row length (ragged) become empty fields
+            let v = row.get(i).map(String::as_str).unwrap_or("");
+            line.push_str(&csv_escape(v));
+        }
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out
+}
+
+fn csv_escape(s: &str) -> String {
+    let needs_quote = s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r');
+    if !needs_quote {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        if c == '"' { out.push_str("\"\""); } else { out.push(c); }
+    }
+    out.push('"');
+    out
+}
+
 /// Identifier immediately before byte index `end` (exclusive) on a line.
 /// Used to resolve `t.<col>` → the table name `t`.
 fn ident_before(line: &str, end: usize) -> String {
@@ -1049,5 +1192,26 @@ mod tests {
         let c = schema_query("users", SchemaOpt::Constraints);
         assert!(c.contains("TABLE_CONSTRAINTS"));
         assert!(c.contains("TABLE_NAME = 'users'"));
+    }
+
+    #[test]
+    fn row_to_json_escapes_and_pairs() {
+        let cols = vec!["id".to_string(), "name".to_string()];
+        let row = vec!["42".to_string(), "a\"b\\c".to_string()];
+        assert_eq!(
+            super::row_to_json(&cols, &row),
+            "{\"id\":\"42\",\"name\":\"a\\\"b\\\\c\"}"
+        );
+        // ragged row: missing column becomes empty string
+        let short = vec!["1".to_string()];
+        assert_eq!(super::row_to_json(&cols, &short), "{\"id\":\"1\",\"name\":\"\"}");
+    }
+
+    #[test]
+    fn csv_escapes_special_fields() {
+        let cols = vec!["a".to_string(), "b".to_string()];
+        let rows = vec![vec!["1".to_string(), "x,y".to_string()], vec!["2".to_string(), "he said \"hi\"".to_string()]];
+        let csv = super::result_to_csv(&cols, &rows);
+        assert_eq!(csv, "a,b\n1,\"x,y\"\n2,\"he said \"\"hi\"\"\"\n");
     }
 }
