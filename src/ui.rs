@@ -1,0 +1,310 @@
+use ratatui::{
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{
+        Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
+    },
+    Frame,
+};
+
+use crate::app::{App, Focus, FormState, Output};
+
+pub fn draw(f: &mut Frame, app: &App) {
+    let main_chunks =
+        Layout::default().direction(Direction::Vertical).constraints([
+            Constraint::Min(3),
+            Constraint::Length(1),
+        ]).split(f.area());
+    let main = main_chunks[0];
+    let status = main_chunks[1];
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(34), Constraint::Min(1)])
+        .split(main);
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(45), Constraint::Min(1)])
+        .split(cols[1]);
+
+    draw_connections(f, app, cols[0]);
+    draw_editor(f, app, right[0]);
+    draw_results(f, app, right[1]);
+    draw_status(f, app, status);
+
+    if let Some(form) = &app.form {
+        draw_form(f, form, f.area());
+    }
+}
+
+fn block(title: &str, focused: bool) -> Block<'_> {
+    let color = if focused { Color::Cyan } else { Color::DarkGray };
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(color))
+        .title(title)
+}
+
+fn draw_connections(f: &mut Frame, app: &App, area: Rect) {
+    let items: Vec<ListItem> = app
+        .config
+        .connections
+        .iter()
+        .map(|c| {
+            let active = app.db_name.as_deref() == Some(c.name.as_str());
+            let prefix = if active { "● " } else { "  " };
+            let line = Line::from(format!(
+                "{prefix}{}  {}@{}:{}",
+                c.name, c.username, c.host, c.port
+            ));
+            let style = if active {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default()
+            };
+            ListItem::new(line).style(style)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(block("Connections", app.focus == Focus::Connections))
+        .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD));
+
+    let mut state = ListState::default();
+    if !app.config.connections.is_empty() {
+        state.select(Some(app.conn_cursor));
+    }
+    f.render_stateful_widget(list, area, &mut state);
+}
+
+fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
+    let b = block("SQL Editor  (Ctrl+R / F5 to run)", app.focus == Focus::Editor);
+    let inner = b.inner(area);
+    f.render_widget(b, area);
+
+    let lines: Vec<Line> = app
+        .editor
+        .text()
+        .split('\n')
+        .map(|l| Line::from(l.to_string()))
+        .collect();
+    f.render_widget(Paragraph::new(lines), inner);
+
+    if app.focus == Focus::Editor {
+        let x = inner.x + app.editor.col as u16;
+        let y = inner.y + app.editor.row as u16;
+        if x < inner.right() && y < inner.bottom() {
+            f.set_cursor_position((x, y));
+        }
+    }
+}
+
+fn draw_results(f: &mut Frame, app: &App, area: Rect) {
+    let title = match &app.output {
+        Output::Table { columns, rows, rows_affected, elapsed_ms } if !columns.is_empty() => {
+            format!(
+                "Results  ·  {} rows  ·  {} affected  ·  {} ms  ·  col {}/{}",
+                rows.len(),
+                rows_affected,
+                elapsed_ms,
+                app.result_col_off + 1,
+                columns.len(),
+            )
+        }
+        _ => "Results".to_string(),
+    };
+    let b = block(&title, app.focus == Focus::Results);
+    let inner = b.inner(area);
+    f.render_widget(b, area);
+
+    match &app.output {
+        Output::Empty => f.render_widget(
+            Paragraph::new("No query run yet.").style(Style::default().fg(Color::DarkGray)),
+            inner,
+        ),
+        Output::Message(m) => f.render_widget(
+            Paragraph::new(m.as_str()).wrap(Wrap { trim: false }),
+            inner,
+        ),
+        Output::Table { columns, rows, rows_affected, elapsed_ms } => {
+            if columns.is_empty() {
+                f.render_widget(
+                    Paragraph::new(format!("{rows_affected} rows affected ({elapsed_ms} ms)")),
+                    inner,
+                );
+                return;
+            }
+            draw_table(f, columns, rows, inner, app.result_row_off, app.result_col_off);
+        }
+    }
+}
+
+/// Manual 2D-scrollable grid: content-sized columns, row/col offsets viewport.
+/// ponytail: widths measured by char count, not display width, so CJK/emoji will
+/// misalign and may overflow a cell. Fine for typical ASCII SQL result sets;
+/// swap in unicode-width if you store wide chars in DB columns.
+fn draw_table(
+    f: &mut Frame,
+    columns: &[String],
+    rows: &[Vec<String>],
+    inner: Rect,
+    row_off: usize,
+    col_off: usize,
+) {
+    let ncol = columns.len();
+    let widths: Vec<usize> = (0..ncol)
+        .map(|c| {
+            let mut w = columns[c].chars().count();
+            for r in 0..rows.len() {
+                if let Some(cell) = rows[r].get(c) {
+                    w = w.max(cell.chars().count());
+                }
+            }
+            w
+        })
+        .collect();
+
+    let rownum_w = rows.len().to_string().len().max(1);
+    let gutter = rownum_w + 1;
+    let avail = inner.width as usize;
+    let body_w = avail.saturating_sub(gutter);
+    const SEP: usize = 2; // spaces between columns
+
+    // Greedily pick visible columns starting at col_off.
+    let mut vis: Vec<usize> = Vec::new();
+    let mut used = 0usize;
+    for c in col_off..ncol {
+        if !vis.is_empty() && used + widths[c] + SEP > body_w {
+            break;
+        }
+        used += widths[c] + SEP;
+        vis.push(c);
+        if used >= body_w {
+            break;
+        }
+    }
+    if vis.is_empty() {
+        vis.push(col_off.min(ncol - 1));
+    }
+
+    let header_body: String =
+        vis.iter().map(|&c| format!("{}  ", pad(&columns[c], widths[c]))).collect();
+    let header_line = Line::from(trunc(&format!("{}{}", " ".repeat(gutter), header_body), avail))
+        .style(Style::default().add_modifier(Modifier::BOLD));
+    let separator = Line::from("─".repeat(avail)).style(Style::default().fg(Color::DarkGray));
+
+    let mut lines: Vec<Line> = vec![header_line, separator];
+    let body_rows = inner.height as usize;
+    let last = (row_off + body_rows.saturating_sub(2)).min(rows.len());
+    for i in row_off..last {
+        let gutter_str = format!("{:>width$} ", i + 1, width = rownum_w);
+        let body: String = vis
+            .iter()
+            .map(|&c| {
+                let cell = rows[i].get(c).map(|s| s.as_str()).unwrap_or("");
+                format!("{}  ", pad(cell, widths[c]))
+            })
+            .collect();
+        lines.push(Line::from(trunc(&format!("{gutter_str}{body}"), avail)));
+    }
+    if rows.is_empty() {
+        lines.push(Line::from("(no rows)").style(Style::default().fg(Color::DarkGray)));
+    }
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn pad(s: &str, w: usize) -> String {
+    let n = s.chars().count();
+    if n >= w {
+        s.chars().take(w).collect()
+    } else {
+        let mut out = s.to_string();
+        out.push_str(&" ".repeat(w - n));
+        out
+    }
+}
+
+fn trunc(s: &str, w: usize) -> String {
+    s.chars().take(w).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pad_trunc_basic() {
+        assert_eq!(pad("ab", 5), "ab   ");
+        assert_eq!(pad("abcdef", 3), "abc");
+        assert_eq!(trunc("abcdef", 3), "abc");
+        assert_eq!(trunc("ab", 5), "ab");
+    }
+
+    #[test]
+    fn row_window_clamps_to_bounds() {
+        // mirrors draw_table's windowing math (header+separator = 2 lines)
+        let rows: usize = 3;
+        let body_rows: usize = 10;
+        let row_off: usize = 1;
+        let last = (row_off + body_rows.saturating_sub(2)).min(rows);
+        assert_eq!((row_off..last).collect::<Vec<_>>(), vec![1, 2]);
+    }
+}
+
+fn draw_status(f: &mut Frame, app: &App, area: Rect) {
+    let conn = app.db_name.clone().unwrap_or_else(|| "not connected".into());
+    let spinner = if app.running_query { " ⏳" } else { "" };
+    let left = format!(" {conn}{spinner} | {} ", app.status);
+    let right = " Tab: focus  Enter: connect  n: new  d: delete  Ctrl+R: run  Results: h/j/k/l scroll  Ctrl+Q: quit ";
+    let line = Line::from(vec![
+        Span::styled(left, Style::default().fg(Color::Yellow)),
+        Span::raw(right),
+    ]);
+    f.render_widget(
+        Paragraph::new(line).style(Style::default().bg(Color::Black)),
+        area,
+    );
+}
+
+fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
+    let w = 64.min(area.width);
+    let h = 12.min(area.height);
+    let x = area.x + (area.width - w) / 2;
+    let y = area.y + (area.height - h) / 2;
+    let pop = Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, pop);
+
+    let b = Block::default()
+        .borders(Borders::ALL)
+        .title("New Connection  (Enter: save, Esc: cancel, Tab: next field)")
+        .border_style(Style::default().fg(Color::Yellow));
+    let inner = b.inner(pop);
+    f.render_widget(b, pop);
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, label) in FormState::LABELS.iter().enumerate() {
+        let val = if i == 4 {
+            "*".repeat(form.fields[i].len())
+        } else {
+            form.fields[i].clone()
+        };
+        let val_style = if i == form.active {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{label:>9}: "), Style::default().fg(Color::Gray)),
+            Span::styled(val, val_style),
+        ]));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+
+    let cx = inner.x + 11 + form.cursor as u16;
+    let cy = inner.y + form.active as u16;
+    if cx < inner.right() && cy < inner.bottom() {
+        f.set_cursor_position((cx, cy));
+    }
+}

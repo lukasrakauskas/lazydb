@@ -1,0 +1,12 @@
+[package]
+name = "lazydb"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ratatui = "0.28"
+crossterm = "0.28"
+mysql = { version = "25", default-features = false, features = ["minimal-rust"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+anyhow = "1"
