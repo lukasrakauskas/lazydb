@@ -100,11 +100,15 @@ fn value_to_string(v: Value, readable_binary: bool) -> String {
 fn bytes_to_string(b: &[u8], readable_binary: bool) -> String {
     if readable_binary {
         // ponytail: valid-UTF8 heuristic — no column-type plumbing. Binary
-        // (invalid UTF-8) → hex, capped at 64 bytes so big BLOBs don't build a
-        // huge string; the UI truncates display width anyway.
+        // (invalid UTF-8) → UUID if exactly 16 bytes (MySQL BINARY(16) UUID
+        // case, BIN_TO_UUID natural order), else hex capped at 64 bytes so big
+        // BLOBs don't build a huge string; the UI truncates display width anyway.
         match std::str::from_utf8(b) {
             Ok(s) => s.to_string(),
             Err(_) => {
+                if b.len() == 16 {
+                    return bin_to_uuid(b);
+                }
                 const CAP: usize = 64;
                 let hex: String = b.iter().take(CAP).map(|x| format!("{:02x}", x)).collect();
                 if b.len() > CAP {
@@ -117,6 +121,17 @@ fn bytes_to_string(b: &[u8], readable_binary: bool) -> String {
     } else {
         String::from_utf8_lossy(b).into_owned()
     }
+}
+
+/// Format 16 bytes as a UUID string: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.
+/// ponytail: matches MySQL BIN_TO_UUID(bin, 0) — natural byte order, no swap.
+/// ceiling: a 16-byte BINARY that isn't a UUID renders UUID-shaped; and UUIDs
+/// stored via MySQL UUID_TO_BIN (which reorders bytes for index locality) won't
+/// round-trip to the original string without a swap. upgrade: detect swap via
+/// column metadata, or add a per-connection swap toggle.
+fn bin_to_uuid(b: &[u8]) -> String {
+    let h: String = b.iter().map(|x| format!("{:02x}", x)).collect();
+    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
 }
 
 #[cfg(test)]
@@ -144,6 +159,26 @@ mod tests {
         assert!(s.starts_with("0x"), "got: {s}");
         assert!(s.ends_with("… (100 bytes)"), "got: {s}");
         assert!(s.contains("ffff"), "got: {s}");
+    }
+
+    #[test]
+    fn bytes_16_bytes_become_uuid() {
+        // 16 bytes of 0xff is invalid UTF-8 and exactly UUID-sized → BIN_TO_UUID.
+        let s = bytes_to_string(&[0xff; 16], true);
+        assert_eq!(s, "ffffffff-ffff-ffff-ffff-ffffffffffff");
+    }
+
+    #[test]
+    fn bytes_uuid_matches_known_value() {
+        // The canonical "all-zeros except version/variant" UUID.
+        let bin: [u8; 16] = [
+            0x01, 0xb4, 0xe9, 0x2f, 0x37, 0x14, 0x43, 0x52,
+            0x86, 0x37, 0xc8, 0x4e, 0xa7, 0x0a, 0x9b, 0x12,
+        ];
+        assert_eq!(
+            bytes_to_string(&bin, true),
+            "01b4e92f-3714-4352-8637-c84ea70a9b12",
+        );
     }
 }
 

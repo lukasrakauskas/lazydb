@@ -12,7 +12,7 @@ so adding a backend = one `match` arm in `db::open` + one impl module.
 - Write SQL in an in-app editor and run it against the active connection
 - Result table with scrollable rows; rows-affected + elapsed for DML
 - Togglable features modal (`f`) — settings persist in the config file
-  - **Readable binary fields**: render BLOB/binary columns as hex (`0x…`) instead of raw bytes
+  - **Readable binary fields**: render binary columns readably — 16-byte values as UUIDs (`BIN_TO_UUID` style, e.g. `01b4e92f-…`), other binaries as hex (`0x…`); valid-UTF8 bytes pass through as text
 - Optional: `lazydb path/to/script.sql` preloads the editor
 
 ## Run
