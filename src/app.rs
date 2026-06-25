@@ -7,7 +7,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use ratatui::{backend::CrosstermBackend, Terminal};
 use ratatui::layout::Rect;
 
-use crate::config::Config;
+use crate::config::{Config, Features};
 use crate::db::{self, Connection, Database, ExecutionResult};
 use crate::editor::Editor;
 use crate::ui;
@@ -34,7 +34,7 @@ pub enum Output {
 
 enum Job {
     Ping(Box<dyn Database>, String),
-    Query(Box<dyn Database>, String),
+    Query(Box<dyn Database>, String, bool),
 }
 
 enum JobResult {
@@ -86,6 +86,8 @@ pub struct App {
     pub result_row_off: usize,
     pub result_col_off: usize,
     pub results_rect: Option<Rect>,
+    pub features_open: bool,
+    pub feature_cursor: usize,
     pub debug_keys: bool,
     pub last_key: Option<String>,
 }
@@ -109,6 +111,8 @@ impl App {
             result_row_off: 0,
             result_col_off: 0,
             results_rect: None,
+            features_open: false,
+            feature_cursor: 0,
             debug_keys: false,
             last_key: None,
         })
@@ -165,7 +169,8 @@ impl App {
             return;
         }
         let db = db.boxed_clone();
-        self.rx = Some(spawn_job(Job::Query(db, sql)));
+        let readable_binary = self.config.features.readable_binary;
+        self.rx = Some(spawn_job(Job::Query(db, sql, readable_binary)));
         self.running_query = true;
         self.status = "Running query…".into();
         self.result_row_off = 0;
@@ -261,6 +266,10 @@ impl App {
             self.handle_form(key);
             return;
         }
+        if self.features_open {
+            self.handle_features(key);
+            return;
+        }
         match key.code {
             KeyCode::Tab => {
                 self.focus = match self.focus {
@@ -278,6 +287,10 @@ impl App {
                 _ => {}
             },
             KeyCode::Char('?') if self.focus != Focus::Editor => self.debug_keys = !self.debug_keys,
+            KeyCode::Char('f') if self.focus != Focus::Editor => {
+                self.features_open = true;
+                self.feature_cursor = 0;
+            }
             KeyCode::Char('q') if self.focus != Focus::Editor => self.running = false,
             _ => match self.focus {
                 Focus::Connections => self.handle_connections(key),
@@ -356,7 +369,7 @@ impl App {
     /// cursor is over it (lazygit-style: scroll the pane you hover). The
     /// results rect is recorded by `ui::draw` each frame.
     pub fn handle_mouse(&mut self, m: MouseEvent) {
-        if self.form.is_some() {
+        if self.form.is_some() || self.features_open {
             return;
         }
         let Some(rect) = self.results_rect else { return };
@@ -427,6 +440,41 @@ impl App {
             _ => {}
         }
     }
+
+    /// Features modal: j/k move, Space/Enter toggles (+ persists), Esc/f/q close.
+    fn handle_features(&mut self, key: KeyEvent) {
+        let last = Features::LIST.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('f') | KeyCode::Char('q') => {
+                self.features_open = false;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.feature_cursor = if self.feature_cursor >= last {
+                    0
+                } else {
+                    self.feature_cursor + 1
+                };
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.feature_cursor = if self.feature_cursor == 0 {
+                    last
+                } else {
+                    self.feature_cursor - 1
+                };
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                let i = self.feature_cursor;
+                let v = !self.config.features.get(i);
+                self.config.features.set(i, v);
+                let name = Features::LIST[i].0;
+                self.status = match self.config.save() {
+                    Ok(()) => format!("{name}: {}", if v { "on" } else { "off" }),
+                    Err(e) => format!("Toggle failed: {e}"),
+                };
+            }
+            _ => {}
+        }
+    }
 }
 
 fn spawn_job(job: Job) -> Receiver<JobResult> {
@@ -437,9 +485,9 @@ fn spawn_job(job: Job) -> Receiver<JobResult> {
                 Ok(()) => JobResult::Ping(Ok(name)),
                 Err(e) => JobResult::Ping(Err(e.to_string())),
             },
-            Job::Query(db, sql) => {
+            Job::Query(db, sql, readable_binary) => {
                 let start = std::time::Instant::now();
-                match db.execute_script(&sql) {
+                match db.execute_script(&sql, readable_binary) {
                     Ok(mut r) => {
                         r.elapsed_ms = start.elapsed().as_millis();
                         JobResult::Query(Ok(r))

@@ -30,7 +30,7 @@ impl Database for Mysql {
         Ok(())
     }
 
-    fn execute_script(&self, sql: &str) -> Result<ExecutionResult> {
+    fn execute_script(&self, sql: &str, readable_binary: bool) -> Result<ExecutionResult> {
         let mut conn = self.pool.get_conn()?;
         let mut columns: Vec<String> = Vec::new();
         let mut rows: Vec<Vec<String>> = Vec::new();
@@ -58,7 +58,7 @@ impl Database for Mysql {
                     let mut r = Vec::with_capacity(set_cols.len());
                     for i in 0..set_cols.len() {
                         let v: Value = row.as_ref(i).cloned().unwrap_or(Value::NULL);
-                        r.push(value_to_string(v));
+                        r.push(value_to_string(v, readable_binary));
                     }
                     rows.push(r);
                 }
@@ -79,7 +79,7 @@ impl Database for Mysql {
     }
 }
 
-fn value_to_string(v: Value) -> String {
+fn value_to_string(v: Value, readable_binary: bool) -> String {
     use Value::*;
     match v {
         NULL => "NULL".into(),
@@ -87,13 +87,63 @@ fn value_to_string(v: Value) -> String {
         UInt(u) => u.to_string(),
         Float(f) => f.to_string(),
         Double(d) => d.to_string(),
-        Bytes(b) => String::from_utf8_lossy(&b).into_owned(),
+        Bytes(b) => bytes_to_string(&b, readable_binary),
         Date(y, m, d, h, mi, s, us) => {
             format!("{y}-{m:02}-{d:02} {h:02}:{mi:02}:{s:02}.{us:06}")
         }
         Time(neg, d, h, mi, s, us) => {
             format!("{}{d}d {h:02}:{mi:02}:{s:02}.{us:06}", if neg { "-" } else { "" })
         }
+    }
+}
+
+fn bytes_to_string(b: &[u8], readable_binary: bool) -> String {
+    if readable_binary {
+        // ponytail: valid-UTF8 heuristic — no column-type plumbing. Binary
+        // (invalid UTF-8) → hex, capped at 64 bytes so big BLOBs don't build a
+        // huge string; the UI truncates display width anyway.
+        match std::str::from_utf8(b) {
+            Ok(s) => s.to_string(),
+            Err(_) => {
+                const CAP: usize = 64;
+                let hex: String = b.iter().take(CAP).map(|x| format!("{:02x}", x)).collect();
+                if b.len() > CAP {
+                    format!("0x{hex}… ({} bytes)", b.len())
+                } else {
+                    format!("0x{hex}")
+                }
+            }
+        }
+    } else {
+        String::from_utf8_lossy(b).into_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bytes_to_string;
+
+    #[test]
+    fn bytes_valid_utf8_pass_through() {
+        assert_eq!(bytes_to_string(b"hello", true), "hello");
+        assert_eq!(bytes_to_string(b"hello", false), "hello");
+    }
+
+    #[test]
+    fn bytes_invalid_utf8_becomes_hex() {
+        // 0xff is never valid UTF-8.
+        assert_eq!(bytes_to_string(&[0xff, 0x00, 0xde, 0xad], true), "0xff00dead");
+    }
+
+    #[test]
+    fn bytes_hex_caps_long_blobs() {
+        // 0xff is never valid UTF-8, so this exercises the hex path (not the
+        // pass-through), and is long enough to hit the 64-byte cap.
+        let big: Vec<u8> = vec![0xff; 100];
+        let s = bytes_to_string(&big, true);
+        assert!(s.starts_with("0x"), "got: {s}");
+        assert!(s.ends_with("… (100 bytes)"), "got: {s}");
+        assert!(s.contains("ffff"), "got: {s}");
     }
 }
 

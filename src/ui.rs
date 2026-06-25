@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::app::{App, Focus, FormState, Output};
+use crate::config::Features;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let main_chunks =
@@ -35,6 +36,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     if let Some(form) = &app.form {
         draw_form(f, form, f.area());
+    }
+
+    if app.features_open {
+        draw_features(f, app, f.area());
     }
 }
 
@@ -265,7 +270,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let conn = app.db_name.clone().unwrap_or_else(|| "not connected".into());
     let spinner = if app.running_query { " ⏳" } else { "" };
     let left = format!(" {conn}{spinner} | {} ", app.status);
-    let right = " Tab: focus  Enter: connect  n: new  d: delete  Ctrl+R/S-Enter: run  Results: h/j/k/l+wheel scroll  ? key-log  Ctrl+Q: quit ";
+    let right = " Tab: focus  Enter: connect  n: new  d: delete  Ctrl+R/S-Enter: run  f: features  ? key-log  Ctrl+Q: quit ";
     let line = Line::from(vec![
         Span::raw(left),
         Span::raw(right),
@@ -316,4 +321,41 @@ fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
     if cx < inner.right() && cy < inner.bottom() {
         f.set_cursor_position((cx, cy));
     }
+}
+
+fn draw_features(f: &mut Frame, app: &App, area: Rect) {
+    // ponytail: height = 2 lines per feature (row + gap) + border/title padding.
+    let h = (Features::LIST.len() as u16 * 2 + 4).min(area.height);
+    let w = 70.min(area.width);
+    let x = area.x + (area.width - w) / 2;
+    let y = area.y + (area.height - h) / 2;
+    let pop = Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, pop);
+
+    let b = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title("Features  (Space: toggle  j/k: move  Esc/f/q: close)")
+        .border_style(Style::default().fg(Color::Yellow));
+    let inner = b.inner(pop);
+    f.render_widget(b, pop);
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, (name, desc)) in Features::LIST.iter().enumerate() {
+        let on = app.config.features.get(i);
+        let selected = i == app.feature_cursor;
+        let mark_style = if selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(if on { Color::Green } else { Color::DarkGray })
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {} ", if on { "[x]" } else { "[ ]" }), mark_style),
+            Span::styled(*name, Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw("  "),
+            Span::styled(*desc, Style::default().fg(Color::DarkGray)),
+        ]));
+        lines.push(Line::from(""));
+    }
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
 }

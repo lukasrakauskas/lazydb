@@ -25,7 +25,7 @@ pub struct ExecutionResult {
 /// ponytail: only mysql wired; postgres/sqlite later = new arm + impl.
 pub trait Database: Send + 'static {
     fn ping(&self) -> Result<()>;
-    fn execute_script(&self, sql: &str) -> Result<ExecutionResult>;
+    fn execute_script(&self, sql: &str, readable_binary: bool) -> Result<ExecutionResult>;
     fn boxed_clone(&self) -> Box<dyn Database>;
 }
 
