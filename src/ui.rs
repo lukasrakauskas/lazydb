@@ -50,6 +50,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.features_open {
         draw_features(f, app, f.area());
     }
+
+    if app.confirm_destructive.is_some() {
+        draw_confirm_destructive(f, app, f.area());
+    }
 }
 
 fn block<'a>(title: &'a str, num: &'a str, focused: bool) -> Block<'a> {
@@ -474,4 +478,42 @@ fn draw_features(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(""));
     }
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
+}
+
+fn draw_confirm_destructive(f: &mut Frame, app: &App, area: Rect) {
+    let w = 72.min(area.width);
+    let h = 8.min(area.height);
+    let x = area.x + (area.width - w) / 2;
+    let y = area.y + (area.height - h) / 2;
+    let pop = Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, pop);
+
+    let sql = app.confirm_destructive.as_deref().unwrap_or("");
+    // ponytail: first line only, truncated to fit the modal.
+    let display = sql.lines().next().unwrap_or(sql);
+    let truncated: String = display.chars().take(58).collect();
+    let line = if display.len() > 58 {
+        format!(" {truncated}…")
+    } else {
+        format!(" {display}")
+    };
+
+    let b = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(" Destructive Query ")
+        .border_style(Style::default().fg(Color::Red));
+    let inner = b.inner(pop);
+    f.render_widget(b, pop);
+
+    let msg = vec![
+        Line::from(Span::raw(line)),
+        Line::from(""),
+        Line::from(Span::styled(
+            " This will modify or delete data.",
+            Style::default().fg(Color::Red),
+        )),
+        Line::from(" Press  y  to confirm  ·  n / Esc  to cancel"),
+    ];
+    f.render_widget(Paragraph::new(msg).wrap(Wrap { trim: false }), inner);
 }

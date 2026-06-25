@@ -17,6 +17,9 @@ Each note records where it plugs in and whether it fits the minimal-TUI ethos.
   `Output::Table`. CSV needs no dep (`std::fs` + comma join + quote-escape).
 - **EXPLAIN** — prefix the query with `EXPLAIN` via a toggle (`e`) or
   `Ctrl+E`. Zero new infra; reuses `execute_script` + the results table.
+- **Destructive-query warning** — confirm modal before `DROP`/`TRUNCATE`/
+  `DELETE` without `WHERE`. Reuses the existing modal pattern (features /
+  new-connection). Safety at a trust boundary — keep this kind.
 
 ## Medium
 
@@ -26,9 +29,6 @@ Each note records where it plugs in and whether it fits the minimal-TUI ethos.
 - **Transaction control** — explicit begin/commit/rollback hotkeys +
   `autocommit` toggle. MySQL is autocommit-by-default; the toggle matters once
   multi-statement scripts run. Needs a `set_autocommit` method on `Database`.
-- **Destructive-query warning** — confirm modal before `DROP`/`TRUNCATE`/
-  `DELETE` without `WHERE`. Reuses the existing modal pattern (features /
-  new-connection). Safety at a trust boundary — keep this kind.
 - **Find/filter in results** — `/` opens a search row; filters displayed rows
   by substring. Results are in memory (`Vec`), so it's a fold + a separate
   cursor. Useful once result sets exceed the screen.

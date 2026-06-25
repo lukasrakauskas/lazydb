@@ -111,6 +111,7 @@ pub struct App {
     pub results_rect: Option<Rect>,
     pub features_open: bool,
     pub feature_cursor: usize,
+    pub confirm_destructive: Option<String>,
     pub debug_keys: bool,
     pub last_key: Option<String>,
     pub autocomplete: Option<Autocomplete>,
@@ -152,6 +153,7 @@ impl App {
             results_rect: None,
             features_open: false,
             feature_cursor: 0,
+            confirm_destructive: None,
             debug_keys: false,
             last_key: None,
             autocomplete: None,
@@ -206,19 +208,27 @@ impl App {
             self.status = "A query is already running.".into();
             return;
         }
-        let Some(db) = self.db.as_ref() else {
-            self.status = "Not connected — select a connection and press Enter.".into();
-            return;
-        };
         let sql = self.editor.text();
         if sql.trim().is_empty() {
             self.status = "Editor is empty.".into();
             return;
         }
+        if is_destructive(&sql) {
+            self.confirm_destructive = Some(sql);
+            self.status = "Destructive query — press 'y' to confirm, 'n' to cancel.".into();
+            return;
+        }
+        self.execute_sql(sql);
+    }
+
+    fn execute_sql(&mut self, sql: String) {
+        let Some(db) = self.db.as_ref() else {
+            self.status = "Not connected — select a connection and press Enter.".into();
+            return;
+        };
         let db = db.boxed_clone();
         let readable_binary = self.config.features.readable_binary;
         // ponytail: in-memory ring buffer (cap 100), dedupe consecutive dupes.
-        // Persist to ~/.config/lazydb/history.toml when cross-session recall is wanted.
         if self.history.last().map(String::as_str) != Some(sql.as_str()) {
             if self.history.len() >= 100 { self.history.remove(0); }
             self.history.push(sql.clone());
@@ -339,6 +349,10 @@ impl App {
         // Option+Enter arrives as Enter+ALT, so bind the editor submit to that.
         if (ctrl && key.code == KeyCode::Char('r')) || key.code == KeyCode::F(5) || (alt && key.code == KeyCode::Enter) {
             self.run_query();
+            return;
+        }
+        if self.confirm_destructive.is_some() {
+            self.handle_confirm_destructive(key);
             return;
         }
         if self.form.is_some() {
@@ -864,6 +878,35 @@ impl App {
             _ => {}
         }
     }
+
+    fn handle_confirm_destructive(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let sql = self.confirm_destructive.take().unwrap();
+                self.execute_sql(sql);
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.confirm_destructive = None;
+                self.status = "Query cancelled.".into();
+            }
+            _ => {}
+        }
+    }
+}
+
+/// ponytail: word-boundary check for destructive SQL commands. Splits on
+/// non-alphanumeric/non-underscore chars. A WHERE anywhere in the statement
+/// suppresses the DELETE warning. Fine for single-statement use.
+fn is_destructive(sql: &str) -> bool {
+    let lower = sql.to_lowercase();
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|w| !w.is_empty())
+        .collect();
+    if words.contains(&"drop") || words.contains(&"truncate") {
+        return true;
+    }
+    words.contains(&"delete") && !lower.contains("where")
 }
 
 fn spawn_job(job: Job) -> Receiver<JobResult> {
