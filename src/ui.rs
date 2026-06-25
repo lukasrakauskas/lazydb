@@ -270,7 +270,14 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let conn = app.db_name.clone().unwrap_or_else(|| "not connected".into());
     let spinner = if app.running_query { " ⏳" } else { "" };
     let left = format!(" {conn}{spinner} | {} ", app.status);
-    let right = " Tab: focus  Enter: connect  n: new  d: delete  Ctrl+R/S-Enter: run  f: features  ? key-log  Ctrl+Q: quit ";
+    // ponytail: when the `?` key-log is on, show the last KeyEvent crossterm
+    // produced so we can see exactly what tmux/ghostty forwards (e.g.
+    // Option+Enter should read key=Enter mods=--A-). Help text otherwise.
+    let right = if app.debug_keys {
+        format!(" {} ", app.last_key.as_deref().unwrap_or("(none)"))
+    } else {
+        " Tab: focus  Enter: connect  n: new  d: delete  Ctrl+R/Opt+Enter: run  f: features  ? key-log  Ctrl+Q: quit ".to_owned()
+    };
     let line = Line::from(vec![
         Span::raw(left),
         Span::raw(right),

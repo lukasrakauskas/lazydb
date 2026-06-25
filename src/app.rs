@@ -251,14 +251,15 @@ impl App {
         // guessing about Shift+Enter / Kitty-protocol passthrough.
         self.last_key = Some(format_key_event(&key));
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
         if ctrl && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('q')) {
             self.running = false;
             return;
         }
-        // Run query: Ctrl+R / F5 / Shift+Enter. Shift+Enter needs the Kitty
-        // keyboard protocol (enabled in main) to report the SHIFT modifier.
-        if (ctrl && key.code == KeyCode::Char('r')) || key.code == KeyCode::F(5) || (shift && key.code == KeyCode::Enter) {
+        // Run query: Ctrl+R / F5 / Option+Enter. Shift+Enter collapses to a
+        // plain Enter through tmux+ghostty (no SHIFT modifier forwarded), but
+        // Option+Enter arrives as Enter+ALT, so bind the editor submit to that.
+        if (ctrl && key.code == KeyCode::Char('r')) || key.code == KeyCode::F(5) || (alt && key.code == KeyCode::Enter) {
             self.run_query();
             return;
         }
