@@ -10,6 +10,7 @@ use ratatui::{
 
 use crate::app::{App, Focus, FormState, Output};
 use crate::config::Features;
+use crate::highlight;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let main_chunks =
@@ -96,11 +97,13 @@ fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
     let inner = b.inner(area);
     f.render_widget(b, area);
 
+    // ponytail: per-line SQL highlighting; block-comment state carries across lines.
+    let mut in_block = false;
     let lines: Vec<Line> = app
         .editor
-        .text()
-        .split('\n')
-        .map(|l| Line::from(l.to_string()))
+        .lines
+        .iter()
+        .map(|l| Line::from(highlight::highlight_line(l, &mut in_block)))
         .collect();
     f.render_widget(Paragraph::new(lines), inner);
 
@@ -110,7 +113,34 @@ fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
         if x < inner.right() && y < inner.bottom() {
             f.set_cursor_position((x, y));
         }
+        draw_autocomplete(f, app, area, (x, y));
     }
+}
+
+/// Autocomplete popup anchored at the editor cursor. Up to 6 items; flips
+/// above the cursor when there's no room below. ponytail: no border, just a
+/// filled rect so it stays a 1-line-per-item overlay.
+fn draw_autocomplete(f: &mut Frame, app: &App, area: Rect, cursor: (u16, u16)) {
+    let Some(ac) = &app.autocomplete else { return; };
+    if ac.items.is_empty() { return; }
+    let max_h = 6usize;
+    let count = ac.items.len().min(max_h);
+    let w = ac.items.iter().take(count).map(|s| s.chars().count()).max().unwrap_or(0) as u16 + 1;
+    let h = count as u16;
+    let (cx, cy) = cursor;
+    let py = if cy + 1 + h <= area.bottom() { cy + 1 } else { cy.saturating_sub(h) };
+    let px = cx.min(area.right().saturating_sub(w));
+    let rect = Rect { x: px, y: py, width: w, height: h };
+    f.render_widget(Clear, rect);
+    let lines: Vec<Line> = ac.items.iter().take(count).enumerate().map(|(i, s)| {
+        let style = if i == ac.cursor {
+            Style::default().bg(Color::Cyan).fg(Color::Black)
+        } else {
+            Style::default().bg(Color::DarkGray).fg(Color::White)
+        };
+        Line::from(Span::styled(format!("{:width$}", s, width = w as usize), style))
+    }).collect();
+    f.render_widget(Paragraph::new(lines), rect);
 }
 
 fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {

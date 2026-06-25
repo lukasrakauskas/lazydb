@@ -9,6 +9,7 @@ use ratatui::layout::Rect;
 
 use crate::config::{Config, Features};
 use crate::db::{self, Connection, Database, ExecutionResult};
+use crate::autocomplete;
 use crate::editor::Editor;
 use crate::ui;
 
@@ -90,6 +91,15 @@ pub struct App {
     pub feature_cursor: usize,
     pub debug_keys: bool,
     pub last_key: Option<String>,
+    pub autocomplete: Option<Autocomplete>,
+}
+
+/// SQL autocomplete popup state. `trigger_len` is the byte length of the
+/// identifier being completed, used to slice it out on accept.
+pub struct Autocomplete {
+    pub items: Vec<String>,
+    pub cursor: usize,
+    pub trigger_len: usize,
 }
 
 impl App {
@@ -115,6 +125,7 @@ impl App {
             feature_cursor: 0,
             debug_keys: false,
             last_key: None,
+            autocomplete: None,
         })
     }
 
@@ -155,6 +166,7 @@ impl App {
     }
 
     fn run_query(&mut self) {
+        self.autocomplete = None;
         if self.running_query {
             self.status = "A query is already running.".into();
             return;
@@ -271,8 +283,19 @@ impl App {
             self.handle_features(key);
             return;
         }
+        // ponytail: autocomplete popup navigation/accept while editing.
+        if self.focus == Focus::Editor && self.autocomplete.is_some() {
+            match key.code {
+                KeyCode::Tab | KeyCode::Enter => { self.accept_completion(); return; }
+                KeyCode::Down => { self.move_completion(1); return; }
+                KeyCode::Up => { self.move_completion(-1); return; }
+                KeyCode::Esc => { self.autocomplete = None; return; }
+                _ => {}
+            }
+        }
         match key.code {
             KeyCode::Tab => {
+                self.autocomplete = None;
                 self.focus = match self.focus {
                     Focus::Connections => Focus::Editor,
                     Focus::Editor => Focus::Results,
@@ -281,11 +304,14 @@ impl App {
             }
             // lazygit-style pane jump: 1/2/3 focus Connections/Editor/Results.
             // Skipped while editing so digits type into the SQL editor.
-            KeyCode::Char(c) if c.is_ascii_digit() && self.focus != Focus::Editor => match c {
-                '1' => self.focus = Focus::Connections,
-                '2' => self.focus = Focus::Editor,
-                '3' => self.focus = Focus::Results,
-                _ => {}
+            KeyCode::Char(c) if c.is_ascii_digit() && self.focus != Focus::Editor => {
+                self.autocomplete = None;
+                match c {
+                    '1' => self.focus = Focus::Connections,
+                    '2' => self.focus = Focus::Editor,
+                    '3' => self.focus = Focus::Results,
+                    _ => {}
+                }
             },
             KeyCode::Char('?') if self.focus != Focus::Editor => self.debug_keys = !self.debug_keys,
             KeyCode::Char('f') if self.focus != Focus::Editor => {
@@ -321,16 +347,75 @@ impl App {
         match key.code {
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.editor.insert_char(c);
+                self.refresh_autocomplete();
             }
             KeyCode::Enter => self.editor.newline(),
-            KeyCode::Backspace => self.editor.backspace(),
-            KeyCode::Left => self.editor.left(),
-            KeyCode::Right => self.editor.right(),
+            KeyCode::Backspace => { self.editor.backspace(); self.refresh_autocomplete(); }
+            KeyCode::Left => { self.editor.left(); self.refresh_autocomplete(); }
+            KeyCode::Right => { self.editor.right(); self.refresh_autocomplete(); }
             KeyCode::Up => self.editor.up(),
             KeyCode::Down => self.editor.down(),
             KeyCode::Home => self.editor.home(),
             KeyCode::End => self.editor.end(),
             _ => {}
+        }
+    }
+
+    /// Recompute the autocomplete popup from the identifier at the cursor.
+    /// ponytail: keyword+function only; merge in INFORMATION_SCHEMA names
+    /// (fetch on connect) when schema-aware completion is needed.
+    fn refresh_autocomplete(&mut self) {
+        let word = self.current_word();
+        if word.len() < 2 {
+            self.autocomplete = None;
+            return;
+        }
+        let items = autocomplete::completions(&word);
+        if items.is_empty() {
+            self.autocomplete = None;
+            return;
+        }
+        let trigger_len = word.len();
+        match &mut self.autocomplete {
+            Some(ac) => {
+                ac.items = items;
+                if ac.cursor >= ac.items.len() { ac.cursor = 0; }
+                ac.trigger_len = trigger_len;
+            }
+            None => self.autocomplete = Some(Autocomplete { items, cursor: 0, trigger_len }),
+        }
+    }
+
+    /// The identifier currently ending at the cursor (byte slice of the line).
+    fn current_word(&self) -> String {
+        let line = &self.editor.lines[self.editor.row];
+        let col = self.editor.col.min(line.len());
+        let mut start = 0;
+        for (i, ch) in line.char_indices() {
+            if i >= col { break; }
+            if !(ch.is_alphanumeric() || ch == '_') {
+                start = i + ch.len_utf8();
+            }
+        }
+        line[start..col].to_string()
+    }
+
+    fn accept_completion(&mut self) {
+        let Some(ac) = self.autocomplete.take() else { return; };
+        if ac.items.is_empty() { return; }
+        let cand = ac.items[ac.cursor % ac.items.len()].clone();
+        let line = &mut self.editor.lines[self.editor.row];
+        let start = self.editor.col.saturating_sub(ac.trigger_len);
+        line.replace_range(start..self.editor.col, &cand);
+        self.editor.col = start + cand.len();
+        self.autocomplete = None;
+    }
+
+    fn move_completion(&mut self, dir: i32) {
+        if let Some(ac) = &mut self.autocomplete {
+            if ac.items.is_empty() { return; }
+            let n = ac.items.len() as i32;
+            ac.cursor = ((ac.cursor as i32 + dir).rem_euclid(n)) as usize;
         }
     }
 

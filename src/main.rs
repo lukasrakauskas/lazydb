@@ -1,7 +1,9 @@
 mod app;
+mod autocomplete;
 mod config;
 mod db;
 mod editor;
+mod highlight;
 mod ui;
 
 use std::io;
