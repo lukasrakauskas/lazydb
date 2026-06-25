@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Stdout;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
@@ -36,11 +37,14 @@ pub enum Output {
 enum Job {
     Ping(Box<dyn Database>, String),
     Query(Box<dyn Database>, String, bool),
+    /// Fetch table→columns for schema-aware completion, on a successful connect.
+    Schema(Box<dyn Database>),
 }
 
 enum JobResult {
     Ping(Result<String, String>),
     Query(Result<ExecutionResult, String>),
+    Schema(Result<HashMap<String, Vec<String>>, String>),
 }
 
 pub struct FormState {
@@ -92,6 +96,7 @@ pub struct App {
     pub debug_keys: bool,
     pub last_key: Option<String>,
     pub autocomplete: Option<Autocomplete>,
+    pub schema: HashMap<String, Vec<String>>,
 }
 
 /// SQL autocomplete popup state. `trigger_len` is the byte length of the
@@ -126,6 +131,7 @@ impl App {
             debug_keys: false,
             last_key: None,
             autocomplete: None,
+            schema: HashMap::new(),
         })
     }
 
@@ -227,8 +233,15 @@ impl App {
                 Ok(name) => {
                     self.db = self.pending_db.take();
                     self.db_name = Some(name.clone());
-                    self.status = format!("Connected to {name}.");
+                    self.status = format!("Connected to {name}. Loading schema…");
                     self.output = Output::Message(format!("Connected to {name}."));
+                    // ponytail: kick off a schema fetch on the job channel so
+                    // completion has real table/column names. Cleared first so a
+                    // stale prior connection's names don't leak in.
+                    self.schema.clear();
+                    if let Some(db) = self.db.as_ref() {
+                        self.rx = Some(spawn_job(Job::Schema(db.boxed_clone())));
+                    }
                 }
                 Err(e) => {
                     self.pending_db = None;
@@ -250,6 +263,14 @@ impl App {
                     self.output = Output::Message(format!("Error: {e}"));
                     self.status = "Query failed.".into();
                 }
+            },
+            JobResult::Schema(r) => match r {
+                Ok(map) => {
+                    let n = map.len();
+                    self.schema = map;
+                    self.status = format!("Schema loaded: {n} tables.");
+                }
+                Err(e) => self.status = format!("Schema load failed: {e}"),
             },
         }
     }
@@ -362,15 +383,21 @@ impl App {
     }
 
     /// Recompute the autocomplete popup from the identifier at the cursor.
-    /// ponytail: keyword+function only; merge in INFORMATION_SCHEMA names
-    /// (fetch on connect) when schema-aware completion is needed.
+    /// ponytail: schema-aware — `t.<col>` offers columns of table `t`; anywhere
+    /// else offers tables + columns of tables referenced in the current
+    /// statement, plus keywords/functions. Schema is fetched once on connect.
     fn refresh_autocomplete(&mut self) {
-        let word = self.current_word();
-        if word.len() < 2 {
+        let (word, word_start) = self.current_word();
+        let line = &self.editor.lines[self.editor.row];
+        let col = self.editor.col.min(line.len());
+        let dot = word_start > 0 && line.as_bytes()[word_start - 1] == b'.';
+        // In dot context a 1-char word is still useful (`t.n` → name).
+        if !dot && word.len() < 2 {
             self.autocomplete = None;
             return;
         }
-        let items = autocomplete::completions(&word);
+        let (tables, columns) = self.completion_pools(dot, word_start, &line[..col]);
+        let items = autocomplete::completions(&word, &tables, &columns);
         if items.is_empty() {
             self.autocomplete = None;
             return;
@@ -386,8 +413,55 @@ impl App {
         }
     }
 
-    /// The identifier currently ending at the cursor (byte slice of the line).
-    fn current_word(&self) -> String {
+    /// Pick the schema pools for the current context.
+    /// dot context → columns of the table named just before the dot;
+    /// otherwise → all tables + columns of tables referenced in the statement.
+    fn completion_pools(&self, dot: bool, word_start: usize, line_up_to_col: &str) -> (Vec<String>, Vec<String>) {
+        if self.schema.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        if dot {
+            let table = ident_before(line_up_to_col, word_start - 1);
+            if let Some(cols) = self.schema.get(&table) {
+                return (Vec::new(), cols.clone());
+            }
+            // ponytail: alias like `u.col` isn't resolved to a table — no hit.
+            // upgrade: track `FROM t alias` and map alias→table.
+            return (Vec::new(), Vec::new());
+        }
+        let tables: Vec<String> = self.schema.keys().cloned().collect();
+        let referenced = autocomplete::referenced_tables(&self.current_statement());
+        let mut columns: Vec<String> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for t in referenced {
+            if let Some(cols) = self.schema.get(&t) {
+                for c in cols {
+                    if seen.insert(c.clone()) { columns.push(c.clone()); }
+                }
+            }
+        }
+        (tables, columns)
+    }
+
+    /// Text of the statement containing the cursor: from the last `;` before
+    /// the cursor up to the cursor. ponytail: byte-offset by summing line lens.
+    fn current_statement(&self) -> String {
+        let mut off = 0usize;
+        for (i, l) in self.editor.lines.iter().enumerate() {
+            if i == self.editor.row {
+                off += self.editor.col.min(l.len());
+                break;
+            }
+            off += l.len() + 1; // +1 for the newline
+        }
+        let text = self.editor.text();
+        let upto = off.min(text.len());
+        let start = text[..upto].rfind(';').map(|p| p + 1).unwrap_or(0);
+        text[start..upto].to_string()
+    }
+
+    /// The identifier currently ending at the cursor: `(word, start_byte)`.
+    fn current_word(&self) -> (String, usize) {
         let line = &self.editor.lines[self.editor.row];
         let col = self.editor.col.min(line.len());
         let mut start = 0;
@@ -397,7 +471,7 @@ impl App {
                 start = i + ch.len_utf8();
             }
         }
-        line[start..col].to_string()
+        (line[start..col].to_string(), start)
     }
 
     fn accept_completion(&mut self) {
@@ -581,10 +655,25 @@ fn spawn_job(job: Job) -> Receiver<JobResult> {
                     Err(e) => JobResult::Query(Err(e.to_string())),
                 }
             }
+            Job::Schema(db) => match db.schema() {
+                Ok(s) => JobResult::Schema(Ok(s)),
+                Err(e) => JobResult::Schema(Err(e.to_string())),
+            }
         };
         let _ = tx.send(res);
     });
     rx
+}
+
+/// Identifier immediately before byte index `end` (exclusive) on a line.
+/// Used to resolve `t.<col>` → the table name `t`.
+fn ident_before(line: &str, end: usize) -> String {
+    let b = line.as_bytes();
+    let mut start = end;
+    while start > 0 && (b[start - 1].is_ascii_alphanumeric() || b[start - 1] == b'_') {
+        start -= 1;
+    }
+    line[start..end].to_string()
 }
 
 /// Compact one-line description of a key event for the inspector.

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use anyhow::Result;
 use mysql::{Opts, Pool, Value, prelude::*};
 
@@ -28,6 +29,16 @@ impl Database for Mysql {
         let mut conn = self.pool.get_conn()?;
         let _: Option<i64> = conn.query_first("SELECT 1")?;
         Ok(())
+    }
+
+    fn schema(&self) -> Result<HashMap<String, Vec<String>>> {
+        let mut conn = self.pool.get_conn()?;
+        let rows: Vec<(String, String)> = conn.query("SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME, ORDINAL_POSITION")?;
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        for (table, column) in rows {
+            map.entry(table).or_default().push(column);
+        }
+        Ok(map)
     }
 
     fn execute_script(&self, sql: &str, readable_binary: bool) -> Result<ExecutionResult> {
