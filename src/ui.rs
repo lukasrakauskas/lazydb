@@ -53,13 +53,21 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 }
 
 fn block<'a>(title: &'a str, num: &'a str, focused: bool) -> Block<'a> {
-    let color = if focused { Color::Cyan } else { Color::DarkGray };
-    // lazygit-style plain bracket badges: [1] [2] [3] — no colored box.
-    let badge = Style::default().fg(color).add_modifier(Modifier::BOLD);
+    // lazygit-faithful: focused pane = bright accent (cyan) + bold border;
+    // unfocused = terminal default (Reset) — muted next to the active border
+    // and adaptive to dark/light themes. Mirrors lazygit's
+    // ActiveBorderColor ["green","bold"] / InactiveBorderColor ["default"].
+    let (color, bold) = if focused {
+        (Color::Cyan, Modifier::BOLD)
+    } else {
+        (Color::Reset, Modifier::empty())
+    };
+    // lazygit-style plain bracket badges: [1] [2] [3] [4] — no colored box.
+    let badge = Style::default().fg(color).add_modifier(bold);
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(color))
+        .border_style(Style::default().fg(color).add_modifier(bold))
         .title(Line::from(vec![
             Span::styled(format!("[{num}]"), badge),
             Span::raw(" "),
@@ -145,12 +153,16 @@ fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
     // Inline block (not the shared `block()` helper) so we can add a
     // right-aligned query-timing title. ponytail: only the editor needs it.
     let focused = app.focus == Focus::Editor;
-    let color = if focused { Color::Cyan } else { Color::DarkGray };
-    let badge = Style::default().fg(color).add_modifier(Modifier::BOLD);
+    let (color, bold) = if focused {
+        (Color::Cyan, Modifier::BOLD)
+    } else {
+        (Color::Reset, Modifier::empty())
+    };
+    let badge = Style::default().fg(color).add_modifier(bold);
     let mut b = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(color))
+        .border_style(Style::default().fg(color).add_modifier(bold))
         .title_top(Line::from(vec![
             Span::styled("[2]".to_string(), badge),
             Span::raw(" "),
