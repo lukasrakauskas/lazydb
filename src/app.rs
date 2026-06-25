@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::Stdout;
 use std::sync::mpsc::{Receiver, TryRecvError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
@@ -85,6 +85,7 @@ pub struct App {
     pub output: Output,
     pub running: bool,
     pub running_query: bool,
+    pub query_start: Option<Instant>,
     pub form: Option<FormState>,
     rx: Option<Receiver<JobResult>>,
     pub status: String,
@@ -97,6 +98,9 @@ pub struct App {
     pub last_key: Option<String>,
     pub autocomplete: Option<Autocomplete>,
     pub schema: HashMap<String, Vec<String>>,
+    pub history: Vec<String>,
+    pub history_cursor: Option<usize>,
+    pub history_draft: Option<String>,
 }
 
 /// SQL autocomplete popup state. `trigger_len` is the byte length of the
@@ -120,6 +124,7 @@ impl App {
             output: Output::Empty,
             running: true,
             running_query: false,
+            query_start: None,
             form: None,
             rx: None,
             status: "Press 'n' to add a connection, then Enter to connect.".into(),
@@ -132,6 +137,9 @@ impl App {
             last_key: None,
             autocomplete: None,
             schema: HashMap::new(),
+            history: Vec::new(),
+            history_cursor: None,
+            history_draft: None,
         })
     }
 
@@ -188,8 +196,17 @@ impl App {
         }
         let db = db.boxed_clone();
         let readable_binary = self.config.features.readable_binary;
+        // ponytail: in-memory ring buffer (cap 100), dedupe consecutive dupes.
+        // Persist to ~/.config/lazydb/history.toml when cross-session recall is wanted.
+        if self.history.last().map(String::as_str) != Some(sql.as_str()) {
+            if self.history.len() >= 100 { self.history.remove(0); }
+            self.history.push(sql.clone());
+        }
+        self.history_cursor = None;
+        self.history_draft = None;
         self.rx = Some(spawn_job(Job::Query(db, sql, readable_binary)));
         self.running_query = true;
+        self.query_start = Some(Instant::now());
         self.status = "Running query…".into();
         self.result_row_off = 0;
         self.result_col_off = 0;
@@ -258,10 +275,12 @@ impl App {
                         elapsed_ms: er.elapsed_ms,
                     };
                     self.status = "Query OK.".into();
+                    self.query_start = None;
                 }
                 Err(e) => {
                     self.output = Output::Message(format!("Error: {e}"));
                     self.status = "Query failed.".into();
+                    self.query_start = None;
                 }
             },
             JobResult::Schema(r) => match r {
@@ -285,6 +304,7 @@ impl App {
         self.last_key = Some(format_key_event(&key));
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         if ctrl && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('q')) {
             self.running = false;
             return;
@@ -313,6 +333,14 @@ impl App {
                 KeyCode::Esc => { self.autocomplete = None; return; }
                 _ => {}
             }
+        }
+        // ponytail: Shift+Up/Shift+Down recall query history in the editor.
+        // Plain Up/Down stay line-cursor moves; autocomplete uses those too,
+        // so this is shift-gated to avoid clashing with either. (Ctrl+Up/Down
+        // was the first choice but collides with terminal/tmux scrollback.)
+        if self.focus == Focus::Editor && shift && matches!(key.code, KeyCode::Up | KeyCode::Down) {
+            self.recall_history(key.code == KeyCode::Up);
+            return;
         }
         match key.code {
             KeyCode::Tab => {
@@ -364,14 +392,64 @@ impl App {
         }
     }
 
+
+    /// Recall a query from history into the editor. `older` = Ctrl+Up,
+    /// `!older` = Ctrl+Down. On entering browse mode the current editor
+    /// text is stashed as a draft so Ctrl+Down past the newest entry restores
+    /// it. ponytail: shell-style recall; cursor parked at the start of the
+    /// recalled text so the whole query is visible.
+    fn recall_history(&mut self, older: bool) {
+        if self.history.is_empty() {
+            return;
+        }
+        let n = self.history.len();
+        if self.history_cursor.is_none() {
+            if older {
+                // enter browse at the newest entry; load and return so the
+                // movement block below doesn't immediately move past it.
+                self.history_draft = Some(self.editor.text());
+                self.history_cursor = Some(n - 1);
+                self.editor = Editor::from_text(self.history[n - 1].clone());
+            }
+            // !older at the draft (newest) position: nothing newer to show.
+            return;
+        }
+        let Some(i) = self.history_cursor else { return; };
+        if older {
+            if i == 0 {
+                return; // oldest reached
+            }
+            self.history_cursor = Some(i - 1);
+        } else if i + 1 < n {
+            self.history_cursor = Some(i + 1);
+        } else {
+            // past the newest → restore the draft we saved on enter
+            self.history_cursor = None;
+            if let Some(draft) = self.history_draft.take() {
+                self.editor = Editor::from_text(draft);
+            }
+            return;
+        }
+        let text = self.history[self.history_cursor.unwrap()].clone();
+        self.editor = Editor::from_text(text);
+    }
+
+    /// Leave history-browse mode without restoring (used when the user starts
+    /// editing a recalled query). The recalled text stays in the editor;
+    /// only the browse cursor/draft are dropped so the next run pushes fresh.
+    fn exit_history_browse(&mut self) {
+        self.history_cursor = None;
+        self.history_draft = None;
+    }
     fn handle_editor(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.exit_history_browse();
                 self.editor.insert_char(c);
                 self.refresh_autocomplete();
             }
-            KeyCode::Enter => self.editor.newline(),
-            KeyCode::Backspace => { self.editor.backspace(); self.refresh_autocomplete(); }
+            KeyCode::Enter => { self.exit_history_browse(); self.editor.newline(); }
+            KeyCode::Backspace => { self.exit_history_browse(); self.editor.backspace(); self.refresh_autocomplete(); }
             KeyCode::Left => { self.editor.left(); self.refresh_autocomplete(); }
             KeyCode::Right => { self.editor.right(); self.refresh_autocomplete(); }
             KeyCode::Up => self.editor.up(),
@@ -490,6 +568,27 @@ impl App {
             if ac.items.is_empty() { return; }
             let n = ac.items.len() as i32;
             ac.cursor = ((ac.cursor as i32 + dir).rem_euclid(n)) as usize;
+        }
+    }
+
+    /// Query timing label for the editor's top-right border. While a query
+    /// runs, shows a live elapsed that ticks up each frame (the render loop
+    /// redraws every ~100ms). After it finishes, holds the final elapsed_ms.
+    /// ponytail: no separate timer thread — the existing poll-loop redraw
+    /// interpolates the clock for free.
+    pub fn editor_time_label(&self) -> Option<String> {
+        if let Some(start) = self.query_start {
+            return Some(format!("{:.1}s", start.elapsed().as_secs_f64()));
+        }
+        match &self.output {
+            Output::Table { elapsed_ms, .. } if *elapsed_ms > 0 => {
+                if *elapsed_ms < 1000 {
+                    Some(format!("{} ms", elapsed_ms))
+                } else {
+                    Some(format!("{:.1}s", *elapsed_ms as f64 / 1000.0))
+                }
+            }
+            _ => None,
         }
     }
 
@@ -764,5 +863,32 @@ mod tests {
 
         let plain = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         assert!(format_key_event(&plain).contains("mods=----"));
+    }
+
+    #[test]
+    fn history_recall_roundtrip_restores_draft() {
+        let mut app = super::App::load().unwrap();
+        app.editor = super::Editor::from_text("draft".into());
+        app.history = vec!["old".to_string(), "new".to_string()];
+
+        // Shift+Up enters browse at the newest entry.
+        app.recall_history(true);
+        assert_eq!(app.editor.text(), "new");
+        assert!(app.history_cursor.is_some());
+
+        // Shift+Up again → older entry.
+        app.recall_history(true);
+        assert_eq!(app.editor.text(), "old");
+
+        // Shift+Up at the oldest is a no-op.
+        app.recall_history(true);
+        assert_eq!(app.editor.text(), "old");
+
+        // Shift+Down back to newest, then once more restores the draft.
+        app.recall_history(false);
+        assert_eq!(app.editor.text(), "new");
+        app.recall_history(false);
+        assert_eq!(app.editor.text(), "draft");
+        assert!(app.history_cursor.is_none());
     }
 }

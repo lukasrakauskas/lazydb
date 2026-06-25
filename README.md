@@ -38,6 +38,7 @@ cargo run -- query.sql
 | `f` | features modal (`Space` toggle, `j/k` move, `Esc`/`f`/`q` close) — not while editing |
 | `d` | delete selected connection |
 | `Ctrl+R` / `F5` / `Option+Enter` | run SQL in the editor |
+| `Shift+Up` / `Shift+Down` | recall older / newer query (in the editor) |
 | `Ctrl+Q` / `Ctrl+C` / `q`* | quit (*`q` types while in the editor) |
 
 Queries run on a background thread so the UI stays responsive.

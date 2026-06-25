@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
@@ -93,7 +93,25 @@ fn draw_connections(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
-    let b = block("SQL Editor  (Ctrl+R / F5 to run)", "2", app.focus == Focus::Editor);
+    // Inline block (not the shared `block()` helper) so we can add a
+    // right-aligned query-timing title. ponytail: only the editor needs it.
+    let focused = app.focus == Focus::Editor;
+    let color = if focused { Color::Cyan } else { Color::DarkGray };
+    let badge = Style::default().fg(color).add_modifier(Modifier::BOLD);
+    let mut b = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(color))
+        .title_top(Line::from(vec![
+            Span::styled("[2]".to_string(), badge),
+            Span::raw(" "),
+            Span::raw("SQL Editor  (Ctrl+R / F5 to run)".to_string()),
+        ]));
+    // ponytail: live query timer top-right; ticks via the render loop's
+    // ~100ms redraw, holds the final value after the query completes.
+    if let Some(t) = app.editor_time_label() {
+        b = b.title_top(Line::from(t).alignment(Alignment::Right));
+    }
     let inner = b.inner(area);
     f.render_widget(b, area);
 
@@ -146,12 +164,11 @@ fn draw_autocomplete(f: &mut Frame, app: &App, area: Rect, cursor: (u16, u16)) {
 fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
     app.results_rect = Some(area);
     let title = match &app.output {
-        Output::Table { columns, rows, rows_affected, elapsed_ms } if !columns.is_empty() => {
+        Output::Table { columns, rows, rows_affected, .. } if !columns.is_empty() => {
             format!(
-                "Results  ·  {} rows  ·  {} affected  ·  {} ms  ·  col {}/{}",
+                "Results  ·  {} rows  ·  {} affected  ·  col {}/{}",
                 rows.len(),
                 rows_affected,
-                elapsed_ms,
                 app.result_col_off + 1,
                 columns.len(),
             )
@@ -171,10 +188,10 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
             Paragraph::new(m.as_str()).wrap(Wrap { trim: false }),
             inner,
         ),
-        Output::Table { columns, rows, rows_affected, elapsed_ms } => {
+        Output::Table { columns, rows, rows_affected, .. } => {
             if columns.is_empty() {
                 f.render_widget(
-                    Paragraph::new(format!("{rows_affected} rows affected ({elapsed_ms} ms)")),
+                    Paragraph::new(format!("{rows_affected} rows affected")),
                     inner,
                 );
                 return;
