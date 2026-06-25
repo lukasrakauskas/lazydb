@@ -26,7 +26,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .split(main);
     let right = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(45), Constraint::Min(1)])
+        // ponytail: fixed 8-row editor pane = 6 content rows + 2 border; results take the rest.
+        .constraints([Constraint::Length(8), Constraint::Min(1)])
         .split(cols[1]);
 
     draw_connections(f, &*app, cols[0]);
