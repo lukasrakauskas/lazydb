@@ -10,7 +10,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, Focus, FormState, Output, ResultsClickGeom, SchemaEntry, SchemaOpt};
+use crate::app::{App, EditCellState, Focus, FormState, Output, ResultsClickGeom, SchemaEntry, SchemaOpt};
 use crate::config::Features;
 use crate::highlight;
 use crate::filter::CellMatches;
@@ -251,17 +251,27 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
                 );
                 return;
             }
-            // When a filter is active, render a 1-row input above the table.
-            // ponytail: reserves 1 line only while filtering so unfiltered
-            // result sets keep full height.
-            let table_area = match &app.result_filter {
-                Some(rf) => {
-                    let [bar, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
-                    draw_filter_bar(f, &rf.query, bar);
-                    rest
-                }
-                None => inner,
+            // Reserve space for the filter bar (top) and/or edit bar (bottom).
+            // ponytail: each reserves 1 line only when active, so unfiltered/
+            // non-editing result sets keep full height.
+            let has_filter = app.result_filter.is_some();
+            let has_edit = app.edit_cell.is_some();
+            let n_bars = (has_filter as u16) + (has_edit as u16);
+            let [bar_area, rest] = if n_bars > 0 {
+                Layout::vertical([Constraint::Length(n_bars), Constraint::Min(1)]).areas(inner)
+            } else {
+                [Rect::ZERO, inner]
             };
+            if let Some(rf) = &app.result_filter {
+                let [filter_bar, _] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(bar_area);
+                draw_filter_bar(f, &rf.query, filter_bar);
+            }
+            if let Some(edit) = &app.edit_cell {
+                let edit_y = bar_area.y + if has_filter { 1 } else { 0 };
+                let edit_bar = Rect { x: bar_area.x, y: edit_y, width: bar_area.width, height: 1 };
+                draw_edit_bar(f, edit, edit_bar);
+            }
+            let table_area = rest;
             // Displayed rows + their absolute indices (filtered subset, or the
             // full set with 0..n). The abs indices drive the row-number column
             // and the matched-char highlight lookup.
@@ -499,6 +509,23 @@ fn draw_table(
     (body_h, visible_cols, geom)
 }
 
+/// One-line edit input rendered below the results table while inline editing
+// is active. Shows `edit <col>: <value>` with the cursor at the edit position.
+fn draw_edit_bar(f: &mut Frame, edit: &EditCellState, area: Rect) {
+    let display = format!("{}: {}", edit.col_name, edit.raw_value);
+    let line = Line::from(vec![
+        Span::styled("edit ", theme::EDIT_PROMPT),
+        Span::styled(display, theme::EDIT_VALUE),
+        Span::styled("▏", theme::EDIT_CURSOR),
+    ]);
+    f.render_widget(Paragraph::new(line), area);
+    let x = area.x + 5 + edit.col_name.len() as u16 + 2 + edit.cursor as u16;
+    let y = area.y;
+    if x < area.right() && y < area.bottom() {
+        f.set_cursor_position((x, y));
+    }
+}
+
 /// One-line filter input rendered above the results table while the filter
 // mode is active. Shows a `filter:` prompt, the live query, and a block cursor.
 // ponytail: no background — a bg(Black) blends into dark terminals and hides
@@ -552,6 +579,7 @@ fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
         app.confirm_destructive.is_some(),
         app.autocomplete.is_some(),
         app.filter_input_open,
+        app.edit_cell.is_some(),
     );
     let mut spans: Vec<Span> = vec![Span::raw(" ")];
     for (i, b) in shortcuts::bar_bindings(view).enumerate() {

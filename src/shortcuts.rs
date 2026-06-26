@@ -33,6 +33,7 @@ pub enum View {
     EditorAutocomplete,
     Results,
     ResultsFilter,
+    ResultsEdit,
     Schema,
 }
 
@@ -93,6 +94,15 @@ pub enum Action {
     FilterCancel,
     /// Filter input row: delete the char before the cursor (Backspace).
     FilterBackspace,
+    // results inline cell editing
+    EditCell,
+    EditCellConfirm,
+    EditCellCancel,
+    EditCellLeft,
+    EditCellRight,
+    EditCellBackspace,
+    EditCellHome,
+    EditCellEnd,
     // schema
     SchemaExpand,
     SchemaCollapse,
@@ -259,6 +269,7 @@ static RESULTS: &[Binding] = &[
     Binding { keys: &[bare(KeyCode::End, "End")], label: "bottom", action: Action::End, hidden: false },
     Binding { keys: &[ch('y', "y")], label: "copy row", action: Action::CopyRowJson, hidden: false },
     Binding { keys: &[ch('/', "/")], label: "filter", action: Action::ToggleFilter, hidden: false },
+    Binding { keys: &[ch('e', "e")], label: "edit cell", action: Action::EditCell, hidden: false },
     Binding { keys: &[ch('d', "d")], label: "deselect", action: Action::Deselect, hidden: false },
     Binding { keys: &[ctrl('s', "Ctrl+S")], label: "copy CSV", action: Action::CopyResultCsv, hidden: false },
 ];
@@ -269,6 +280,17 @@ static RESULTS_FILTER: &[Binding] = &[
     Binding { keys: &[bare(KeyCode::Backspace, "⌫")], label: "del", action: Action::FilterBackspace, hidden: false },
     Binding { keys: &[ch('/', "/")], label: "close", action: Action::ToggleFilter, hidden: false },
     // typed chars fall through to raw text input (the filter query); no binding.
+];
+
+static RESULTS_EDIT: &[Binding] = &[
+    Binding { keys: &[bare(KeyCode::Enter, "⏎")], label: "save", action: Action::EditCellConfirm, hidden: false },
+    Binding { keys: &[bare(KeyCode::Esc, "Esc")], label: "cancel", action: Action::EditCellCancel, hidden: false },
+    Binding { keys: &[bare(KeyCode::Left, "←")], label: "left", action: Action::EditCellLeft, hidden: false },
+    Binding { keys: &[bare(KeyCode::Right, "→")], label: "right", action: Action::EditCellRight, hidden: false },
+    Binding { keys: &[bare(KeyCode::Home, "Home")], label: "home", action: Action::EditCellHome, hidden: false },
+    Binding { keys: &[bare(KeyCode::End, "End")], label: "end", action: Action::EditCellEnd, hidden: false },
+    Binding { keys: &[bare(KeyCode::Backspace, "⌫")], label: "del", action: Action::EditCellBackspace, hidden: false },
+    // typed chars fall through to raw text input; no binding.
 ];
 
 static SCHEMA: &[Binding] = &[
@@ -309,6 +331,7 @@ fn view_bindings(view: View) -> &'static [Binding] {
         View::EditorAutocomplete => EDITOR_AUTOCOMPLETE,
         View::Results => RESULTS,
         View::ResultsFilter => RESULTS_FILTER,
+        View::ResultsEdit => RESULTS_EDIT,
         View::Schema => SCHEMA,
         View::Form => FORM,
         View::Features => FEATURES,
@@ -352,6 +375,7 @@ pub fn current_view(
     confirm: bool,
     autocomplete: bool,
     filter_input_open: bool,
+    edit_cell: bool,
 ) -> View {
     if confirm {
         View::ConfirmDestructive
@@ -361,6 +385,8 @@ pub fn current_view(
         View::Features
     } else if filter_input_open {
         View::ResultsFilter
+    } else if edit_cell {
+        View::ResultsEdit
     } else if autocomplete {
         View::EditorAutocomplete
     } else {
@@ -393,20 +419,24 @@ mod tests {
     #[test]
     fn current_view_modal_wins_over_focus_and_autocomplete() {
         assert_eq!(
-            current_view(Focus::Editor, true, true, true, true, true),
+            current_view(Focus::Editor, true, true, true, true, true, false),
             View::ConfirmDestructive
         );
-        assert_eq!(current_view(Focus::Editor, true, false, false, false, false), View::Form);
-        assert_eq!(current_view(Focus::Editor, false, true, false, false, false), View::Features);
+        assert_eq!(current_view(Focus::Editor, true, false, false, false, false, false), View::Form);
+        assert_eq!(current_view(Focus::Editor, false, true, false, false, false, false), View::Features);
         assert_eq!(
-            current_view(Focus::Editor, false, false, false, true, false),
+            current_view(Focus::Editor, false, false, false, true, false, false),
             View::EditorAutocomplete
         );
-        assert_eq!(current_view(Focus::Results, false, false, false, false, false), View::Results);
+        assert_eq!(current_view(Focus::Results, false, false, false, false, false, false), View::Results);
         // input open → ResultsFilter (typing mode). The "filter applied but
         // input closed" case (after Accept) is just the line above — Results —
         // since current_view only takes the open flag, not whether a filter is applied.
-        assert_eq!(current_view(Focus::Results, false, false, false, false, true), View::ResultsFilter);
+        assert_eq!(current_view(Focus::Results, false, false, false, false, true, false), View::ResultsFilter);
+        // edit_cell → ResultsEdit
+        assert_eq!(current_view(Focus::Results, false, false, false, false, false, true), View::ResultsEdit);
+        // edit_cell loses to modals
+        assert_eq!(current_view(Focus::Results, false, false, true, false, false, true), View::ConfirmDestructive);
     }
 
     #[test]

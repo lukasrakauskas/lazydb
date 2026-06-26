@@ -85,6 +85,16 @@ impl Database for Mysql {
         })
     }
 
+    fn primary_keys(&self, table: &str) -> Result<Vec<String>> {
+        let mut conn = self.pool.get_conn()?;
+        let rows: Vec<(String,)> = conn.query(format!(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE \
+             WHERE CONSTRAINT_NAME = 'PRIMARY' AND TABLE_SCHEMA = DATABASE() \
+             AND TABLE_NAME = '{table}' ORDER BY ORDINAL_POSITION"
+        ))?;
+        Ok(rows.into_iter().map(|(s,)| s).collect())
+    }
+
     fn boxed_clone(&self) -> Box<dyn Database> {
         Box::new(Self { pool: self.pool.clone() })
     }

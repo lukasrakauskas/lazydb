@@ -28,6 +28,11 @@ pub const FILTER_PROMPT: Style = Style::new().fg(Color::Blue).add_modifier(Modif
 pub const FILTER_QUERY: Style = Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD);
 pub const FILTER_CURSOR: Style = Style::new().fg(Color::Blue).add_modifier(Modifier::BOLD);
 
+// ── Edit bar ─────────────────────────────────────────────────────────
+pub const EDIT_PROMPT: Style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+pub const EDIT_VALUE: Style = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
+pub const EDIT_CURSOR: Style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+
 // ── Matched char highlight (fuzzy filter glow) ───────────────────────
 pub const MATCHED_CHAR: Style = Style::new().fg(Color::Magenta).add_modifier(Modifier::BOLD);
 

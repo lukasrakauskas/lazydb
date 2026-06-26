@@ -31,6 +31,7 @@ pub trait Database: Send + 'static {
     /// ponytail: one INFORMATION_SCHEMA query; tables with zero columns won't
     /// appear (rare). upgrade: a separate TABLES query if you need empty tables.
     fn schema(&self) -> Result<HashMap<String, Vec<String>>>;
+    fn primary_keys(&self, table: &str) -> Result<Vec<String>>;
     fn boxed_clone(&self) -> Box<dyn Database>;
 }
 

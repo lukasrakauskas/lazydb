@@ -74,6 +74,31 @@ pub struct ResultFilter {
     pub offsets: std::collections::HashMap<usize, CellMatches>,
 }
 
+/// State for the inline cell editor: the user is typing a new value for a
+/// result cell, to be written back via `UPDATE ... WHERE pk=...`.
+pub struct EditCellState {
+    pub raw_value: String,
+    pub abs_row: usize,
+    pub col: usize,
+    pub col_name: String,
+    pub table: String,
+    pub pk_cols: Vec<String>,
+    pub pk_vals: Vec<String>,
+    pub cursor: usize,
+    pub original_value: String,
+}
+
+/// Pending cell edit while we query the primary key columns of the table.
+pub struct EditCellPending {
+    pub abs_row: usize,
+    pub col: usize,
+    pub cell_value: String,
+    pub col_name: String,
+    pub table: String,
+    pub columns_len: usize,
+    pub rows_len: usize,
+}
+
 /// Map a click at screen `(x, y)` to `(row, col)` using the last-rendered
 // table geometry. `row` is `Some` only for body clicks; `col` is `Some` when
 // the click lands on a data column (body or header) — clicks in the row-num
@@ -97,12 +122,16 @@ enum Job {
     Query(Box<dyn Database>, String, bool),
     /// Fetch table→columns for schema-aware completion, on a successful connect.
     Schema(Box<dyn Database>),
+    PrimaryKeys(Box<dyn Database>, String),
+    UpdateCell(Box<dyn Database>, String),
 }
 
 enum JobResult {
     Ping(Result<String, String>),
     Query(Result<ExecutionResult, String>),
     Schema(Result<HashMap<String, Vec<String>>, String>),
+    PrimaryKeys(Result<Vec<String>, String>),
+    UpdateCell(Result<ExecutionResult, String>),
 }
 
 pub struct FormState {
@@ -178,6 +207,9 @@ pub struct App {
     pub history: Vec<String>,
     pub history_cursor: Option<usize>,
     pub history_draft: Option<String>,
+    pub edit_cell: Option<EditCellState>,
+    pub edit_cell_pending: Option<EditCellPending>,
+    pub pending_cell_update: Option<(usize, usize, String)>,
 }
 
 /// SQL autocomplete popup state. `trigger_len` is the byte length of the
@@ -227,6 +259,9 @@ impl App {
             history: Vec::new(),
             history_cursor: None,
             history_draft: None,
+            edit_cell: None,
+            edit_cell_pending: None,
+            pending_cell_update: None,
         })
     }
 
@@ -306,6 +341,8 @@ impl App {
         self.result_cursor_row = None;
         self.result_filter = None;
         self.filter_input_open = false;
+        self.edit_cell = None;
+        self.edit_cell_pending = None;
         self.result_scroll_row = 0;
         self.result_cursor_col = 0;
         self.result_scroll_col = 0;
@@ -394,6 +431,67 @@ impl App {
                 }
                 Err(e) => self.status = format!("Schema load failed: {e}"),
             },
+            JobResult::PrimaryKeys(r) => match r {
+                Ok(pk_cols) => {
+                    let pending = match self.edit_cell_pending.take() {
+                        Some(p) => p,
+                        None => return,
+                    };
+                    match &self.output {
+                        Output::Table { columns, rows, .. }
+                            if columns.len() == pending.columns_len
+                                && rows.len() == pending.rows_len =>
+                        {
+                            let pk_vals: Vec<String> = pk_cols
+                                .iter()
+                                .filter_map(|pk| {
+                                    let idx = columns.iter().position(|c| c == pk)?;
+                                    rows.get(pending.abs_row)?.get(idx).cloned()
+                                })
+                                .collect();
+                            if pk_cols.is_empty() {
+                                self.status = "Cannot edit: table has no primary key.".into();
+                                return;
+                            }
+                            if pk_vals.len() != pk_cols.len() {
+                                self.status = "Cannot edit: primary key columns not in result set.".into();
+                                return;
+                            }
+                            self.edit_cell = Some(EditCellState {
+                                raw_value: pending.cell_value.clone(),
+                                abs_row: pending.abs_row,
+                                col: pending.col,
+                                col_name: pending.col_name.clone(),
+                                table: pending.table.clone(),
+                                pk_cols,
+                                pk_vals,
+                                cursor: pending.cell_value.len(),
+                                original_value: pending.cell_value.clone(),
+                            });
+                            self.status = "Editing cell — Enter to save, Esc to cancel.".into();
+                        }
+                        _ => {
+                            self.status = "Cannot edit: result set has changed.".into();
+                        }
+                    }
+                }
+                Err(e) => self.status = format!("Primary key lookup failed: {e}"),
+            },
+            JobResult::UpdateCell(r) => match r {
+                Ok(er) => {
+                    if let Some((row, col, new_val)) = self.pending_cell_update.take()
+                        && let Output::Table { rows, .. } = &mut self.output
+                    {
+                        if let Some(r) = rows.get_mut(row)
+                            && let Some(c) = r.get_mut(col)
+                        {
+                            *c = new_val;
+                        }
+                    }
+                    self.status = format!("Cell updated ({} rows affected).", er.rows_affected);
+                }
+                Err(e) => self.status = format!("Update failed: {e}"),
+            },
         }
     }
 
@@ -415,6 +513,7 @@ impl App {
             self.confirm_destructive.is_some(),
             self.autocomplete.is_some(),
             self.filter_input_open,
+            self.edit_cell.is_some(),
         );
         if let Some(action) = shortcuts::match_key(view, key) {
             self.apply_action(view, action);
@@ -619,6 +718,38 @@ impl App {
                 self.confirm_destructive = None;
                 self.status = "Query cancelled.".into();
             }
+
+            EditCell => self.start_edit_cell(),
+            EditCellConfirm => self.confirm_edit_cell(),
+            EditCellCancel => self.cancel_edit_cell(),
+            EditCellLeft => {
+                if let Some(edit) = &mut self.edit_cell {
+                    edit.cursor = edit.cursor.saturating_sub(1);
+                }
+            }
+            EditCellRight => {
+                if let Some(edit) = &mut self.edit_cell {
+                    edit.cursor = (edit.cursor + 1).min(edit.raw_value.len());
+                }
+            }
+            EditCellHome => {
+                if let Some(edit) = &mut self.edit_cell {
+                    edit.cursor = 0;
+                }
+            }
+            EditCellEnd => {
+                if let Some(edit) = &mut self.edit_cell {
+                    edit.cursor = edit.raw_value.len();
+                }
+            }
+            EditCellBackspace => {
+                if let Some(edit) = &mut self.edit_cell
+                    && edit.cursor > 0
+                {
+                    edit.cursor -= 1;
+                    edit.raw_value.remove(edit.cursor);
+                }
+            }
         }
     }
 
@@ -650,6 +781,12 @@ impl App {
                     if let Some(f) = self.form.as_mut() {
                         f.fields[f.active].insert(f.cursor, c);
                         f.cursor += 1;
+                    }
+                }
+                View::ResultsEdit => {
+                    if let Some(edit) = &mut self.edit_cell {
+                        edit.raw_value.insert(edit.cursor, c);
+                        edit.cursor += 1;
                     }
                 }
                 _ => {}
@@ -852,6 +989,86 @@ impl App {
             Ok(()) => format!("{name}: {}", if v { "on" } else { "off" }),
             Err(e) => format!("Toggle failed: {e}"),
         };
+    }
+
+    fn start_edit_cell(&mut self) {
+        let Some(db) = self.db.as_ref() else {
+            self.status = "Not connected.".into();
+            return;
+        };
+        let abs_row = match self.selected_abs_row() {
+            Some(r) => r,
+            None => {
+                self.status = "No row selected — press j/k or click to select.".into();
+                return;
+            }
+        };
+        let Output::Table { columns, rows, .. } = &self.output else {
+            self.status = "No result table to edit.".into();
+            return;
+        };
+        let cell_value = match rows.get(abs_row).and_then(|r| r.get(self.result_cursor_col)) {
+            Some(v) => v.clone(),
+            None => {
+                self.status = "Invalid cell.".into();
+                return;
+            }
+        };
+        let col_idx = self.result_cursor_col.min(columns.len().saturating_sub(1));
+        let col_name = columns[col_idx].clone();
+        let table = match extract_table_name(&self.editor.text()) {
+            Some(t) => t,
+            None => {
+                self.status = "Cannot edit: no table name found in the query.".into();
+                return;
+            }
+        };
+        self.edit_cell_pending = Some(EditCellPending {
+            abs_row,
+            col: self.result_cursor_col,
+            cell_value: cell_value.clone(),
+            col_name,
+            table,
+            columns_len: columns.len(),
+            rows_len: rows.len(),
+        });
+        let db = db.boxed_clone();
+        let table = self.edit_cell_pending.as_ref().unwrap().table.clone();
+        self.rx = Some(spawn_job(Job::PrimaryKeys(db, table)));
+        self.running_query = true;
+        self.status = "Looking up primary key…".into();
+    }
+
+    fn confirm_edit_cell(&mut self) {
+        let edit = match self.edit_cell.take() {
+            Some(e) => e,
+            None => return,
+        };
+        if edit.raw_value == edit.original_value {
+            self.status = "No change.".into();
+            return;
+        }
+        let Some(db) = self.db.as_ref() else {
+            self.status = "Not connected.".into();
+            return;
+        };
+        let sql = build_update_sql(
+            &edit.table,
+            &edit.col_name,
+            &edit.raw_value,
+            &edit.pk_cols,
+            &edit.pk_vals,
+        );
+        let db = db.boxed_clone();
+        self.pending_cell_update = Some((edit.abs_row, edit.col, edit.raw_value));
+        self.rx = Some(spawn_job(Job::UpdateCell(db, sql)));
+        self.running_query = true;
+        self.status = "Updating cell…".into();
+    }
+
+    fn cancel_edit_cell(&mut self) {
+        self.edit_cell = None;
+        self.status = "Edit cancelled.".into();
     }
 
     /// Recall a query from history into the editor. `older` = Ctrl+Up,
@@ -1184,6 +1401,20 @@ fn spawn_job(job: Job) -> Receiver<JobResult> {
             Job::Schema(db) => match db.schema() {
                 Ok(s) => JobResult::Schema(Ok(s)),
                 Err(e) => JobResult::Schema(Err(e.to_string())),
+            },
+            Job::PrimaryKeys(db, table) => match db.primary_keys(&table) {
+                Ok(pks) => JobResult::PrimaryKeys(Ok(pks)),
+                Err(e) => JobResult::PrimaryKeys(Err(e.to_string())),
+            },
+            Job::UpdateCell(db, sql) => {
+                let start = std::time::Instant::now();
+                match db.execute_script(&sql, false) {
+                    Ok(mut r) => {
+                        r.elapsed_ms = start.elapsed().as_millis();
+                        JobResult::UpdateCell(Ok(r))
+                    }
+                    Err(e) => JobResult::UpdateCell(Err(e.to_string())),
+                }
             }
         };
         let _ = tx.send(res);
@@ -1204,6 +1435,48 @@ fn schema_query(table: &str, opt: SchemaOpt) -> String {
         ),
         SchemaOpt::Indexes => format!("SHOW INDEX FROM `{table}`;"),
     }
+}
+
+/// Extract the first table name from a SQL `SELECT`/`UPDATE`/`DELETE` statement.
+/// ponytail: naive FROM-clause parser — works for `SELECT * FROM table`,
+/// `SELECT col FROM table WHERE ...`, `SELECT t.* FROM table t JOIN ...`.
+/// Fails for subqueries, CTEs, UNIONs, etc. Good enough for the common case.
+fn extract_table_name(sql: &str) -> Option<String> {
+    let lower = sql.to_lowercase();
+    let from_idx = lower.find("from")?;
+    let after_from = sql[from_idx + 4..].trim_start();
+    if let Some(rest) = after_from.strip_prefix('`') {
+        let end = rest.find('`')?;
+        return Some(rest[..end].to_string());
+    }
+    let table = after_from.split_whitespace().next()?;
+    let table = table.split(',').next()?;
+    Some(table.to_string())
+}
+
+/// Build a parameterised `UPDATE` SQL statement from cell-edit inputs.
+/// Values are escaped with single-quote doubling and backslash doubling.
+fn build_update_sql(
+    table: &str,
+    col: &str,
+    new_val: &str,
+    pk_cols: &[String],
+    pk_vals: &[String],
+) -> String {
+    format!(
+        "UPDATE `{table}` SET `{col}` = '{}' WHERE {}",
+        sql_escape(new_val),
+        pk_cols
+            .iter()
+            .zip(pk_vals.iter())
+            .map(|(pc, pv)| format!("`{pc}` = '{}'", sql_escape(pv)))
+            .collect::<Vec<_>>()
+            .join(" AND ")
+    )
+}
+
+fn sql_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "''")
 }
 
 /// Copy text to the system clipboard. ponytail: shell out to the platform
