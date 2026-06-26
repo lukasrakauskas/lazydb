@@ -13,6 +13,7 @@ use ratatui::{
 use crate::app::{App, Focus, FormState, Output, ResultsClickGeom, SchemaEntry, SchemaOpt};
 use crate::config::Features;
 use crate::highlight;
+use crate::filter::CellMatches;
 use crate::shortcuts;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
@@ -364,7 +365,7 @@ fn draw_table(
     // When a filter is active, maps abs row → matched byte offsets in the
     // row's tab-joined text, for the FZF-style char highlight. None = no
     // filter, render cells plain.
-    offsets: Option<&std::collections::HashMap<usize, Vec<usize>>>,
+    offsets: Option<&std::collections::HashMap<usize, CellMatches>>,
 ) -> (usize, usize, ResultsClickGeom) {
     let ncol = columns.len();
     // Content-width per column (char count).
@@ -418,17 +419,18 @@ fn draw_table(
     let last_vis = (scroll_row + body_h).min(rows.len());
     let data_rows = rows[first..last_vis].iter().enumerate().map(|(rel, r)| {
         let abs = disp_abs.get(first + rel).copied().unwrap_or(first + rel);
-        // Split the row's joined-text match offsets into per-cell byte offsets,
-        // so each visible cell can highlight the chars the query matched.
-        let per_cell = match offsets.and_then(|m| m.get(&abs)) {
-            Some(hits) => crate::filter::split_cell_offsets(hits, r),
-            None => Vec::new(),
-        };
+        // Per-cell matched offsets for this row (from the active filter), so
+        // each visible cell can highlight the chars the query matched within it.
+        let matched_cells = offsets.and_then(|m| m.get(&abs)).cloned().unwrap_or_default();
         let mut cells: Vec<Line> = Vec::with_capacity(vis.len() + 1);
         cells.push(Line::from(format!("{:>width$}", abs + 1, width = rownum_w)));
         for &c in &vis {
             let cell_str = r.get(c).cloned().unwrap_or_default();
-            let hits = per_cell.get(c).cloned().unwrap_or_default();
+            let hits = matched_cells
+                .iter()
+                .find(|(col, _)| *col == c)
+                .map(|(_, o)| o.clone())
+                .unwrap_or_default();
             cells.push(highlighted_line(&cell_str, &hits));
         }
         Row::new(cells)
@@ -587,7 +589,7 @@ fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
         app.features_open,
         app.confirm_destructive.is_some(),
         app.autocomplete.is_some(),
-        app.result_filter.is_some(),
+        app.filter_input_open,
     );
     let mut spans: Vec<Span> = vec![Span::raw(" ")];
     for (i, b) in shortcuts::bar_bindings(view).enumerate() {

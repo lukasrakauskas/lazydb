@@ -267,6 +267,7 @@ static RESULTS_FILTER: &[Binding] = &[
     Binding { keys: &[bare(KeyCode::Enter, "⏎")], label: "accept", action: Action::FilterAccept, hidden: false },
     Binding { keys: &[bare(KeyCode::Esc, "Esc")], label: "cancel", action: Action::FilterCancel, hidden: false },
     Binding { keys: &[bare(KeyCode::Backspace, "⌫")], label: "del", action: Action::FilterBackspace, hidden: false },
+    Binding { keys: &[ch('/', "/")], label: "close", action: Action::ToggleFilter, hidden: false },
     // typed chars fall through to raw text input (the filter query); no binding.
 ];
 
@@ -350,7 +351,7 @@ pub fn current_view(
     features: bool,
     confirm: bool,
     autocomplete: bool,
-    result_filter: bool,
+    filter_input_open: bool,
 ) -> View {
     if confirm {
         View::ConfirmDestructive
@@ -358,7 +359,7 @@ pub fn current_view(
         View::Form
     } else if features {
         View::Features
-    } else if result_filter {
+    } else if filter_input_open {
         View::ResultsFilter
     } else if autocomplete {
         View::EditorAutocomplete
@@ -402,6 +403,10 @@ mod tests {
             View::EditorAutocomplete
         );
         assert_eq!(current_view(Focus::Results, false, false, false, false, false), View::Results);
+        // input open → ResultsFilter (typing mode). The "filter applied but
+        // input closed" case (after Accept) is just the line above — Results —
+        // since current_view only takes the open flag, not whether a filter is applied.
+        assert_eq!(current_view(Focus::Results, false, false, false, false, true), View::ResultsFilter);
     }
 
     #[test]

@@ -14,6 +14,7 @@ use crate::autocomplete;
 use crate::editor::Editor;
 use crate::ui;
 use crate::shortcuts::{self, Action, View};
+use crate::filter::CellMatches;
 
 type Term = Terminal<CrosstermBackend<Stdout>>;
 
@@ -63,13 +64,14 @@ pub struct ResultsClickGeom {
 
 /// Active fuzzy filter on the results. `matched` holds the absolute row
 // indices that pass the filter, best fuzzy score first. `offsets` maps each
-// matched abs row → byte offsets in that row's tab-joined text, so the renderer
-// can highlight the matched chars. The renderer + nav operate on the `matched`
+// matched abs row → the cells that matched (col + within-cell byte offsets),
+// so the renderer can highlight the matched chars. Matching is per-cell — a
+// match never bridges two cells. The renderer + nav operate on the `matched`
 // subset; the cursor indexes into it.
 pub struct ResultFilter {
     pub query: String,
     pub matched: Vec<usize>,
-    pub offsets: std::collections::HashMap<usize, Vec<usize>>,
+    pub offsets: std::collections::HashMap<usize, CellMatches>,
 }
 
 /// Map a click at screen `(x, y)` to `(row, col)` using the last-rendered
@@ -159,6 +161,11 @@ pub struct App {
     pub results_rect: Option<Rect>,
     pub results_click_geom: Option<ResultsClickGeom>,
     pub result_filter: Option<ResultFilter>,
+    /// Filter input mode is open (typing the query). Distinct from
+    // `result_filter.is_some()`: a filter can be *applied* while the input is
+    // closed (Accept) — then `current_view` is `Results`, not `ResultsFilter`,
+    // so nav keys work on the filtered set instead of editing the query.
+    pub filter_input_open: bool,
     pub features_open: bool,
     pub feature_cursor: usize,
     pub confirm_destructive: Option<String>,
@@ -207,6 +214,7 @@ impl App {
             results_rect: None,
             results_click_geom: None,
             result_filter: None,
+            filter_input_open: false,
             features_open: false,
             feature_cursor: 0,
             confirm_destructive: None,
@@ -297,6 +305,7 @@ impl App {
         self.status = "Running query…".into();
         self.result_cursor_row = None;
         self.result_filter = None;
+        self.filter_input_open = false;
         self.result_scroll_row = 0;
         self.result_cursor_col = 0;
         self.result_scroll_col = 0;
@@ -405,7 +414,7 @@ impl App {
             self.features_open,
             self.confirm_destructive.is_some(),
             self.autocomplete.is_some(),
-            self.result_filter.is_some(),
+            self.filter_input_open,
         );
         if let Some(action) = shortcuts::match_key(view, key) {
             self.apply_action(view, action);
@@ -527,28 +536,33 @@ impl App {
             // is left alone so the column guide stays where it was.
             Deselect => self.result_cursor_row = None,
 
-            // Fuzzy filter on the results. `/` toggles the input mode; Enter
-            // commits and stays filtered (cursor deselected), Esc cancels and
-            // restores the full set, Backspace edits the query live.
+            // Fuzzy filter on the results. `/` toggles the input: opens fresh
+            // if no filter is applied, re-opens the existing query for editing
+            // if a filter is applied but the input is closed (after Accept), or
+            // cancels if the input is already open. Enter commits (closes input,
+            // keeps the filter — nav resumes on the filtered set); Esc cancels.
             ToggleFilter => {
-                if self.result_filter.is_some() {
-                    self.clear_filter();
-                } else {
-                    self.set_filter_query("");
+                match (&self.result_filter, self.filter_input_open) {
+                    (None, _) => self.set_filter_query(""),
+                    (Some(_), false) => self.filter_input_open = true,
+                    (Some(_), true) => self.clear_filter(),
                 }
             }
             FilterAccept => {
-                // ponytail: keep the filter active (committed) but drop the input
-                // mode — nav resumes on the filtered set. An empty query keeps
-                // all rows, so an empty accept is equivalent to cancel.
+                // An empty query keeps all rows, so an empty accept is equivalent
+                // to cancel. Otherwise close the input but keep the filter applied.
                 let empty = self.result_filter.as_ref().is_none_or(|f| f.query.is_empty());
                 if empty {
                     self.clear_filter();
+                } else {
+                    self.filter_input_open = false;
                 }
             }
             FilterCancel => self.clear_filter(),
             FilterBackspace => {
-                if let Some(f) = self.result_filter.as_mut() {
+                if self.filter_input_open
+                    && let Some(f) = self.result_filter.as_mut()
+                {
                     f.query.pop();
                     let q = f.query.clone();
                     self.set_filter_query(&q);
@@ -622,8 +636,10 @@ impl App {
                     self.refresh_autocomplete();
                 }
                 View::ResultsFilter => {
-                    // Append to the live query and re-filter. Re-uses
-                    // `set_filter_query` so the matched set + scroll reset.
+                    // Append to the live query and re-filter. Only reached when
+                    // the input is open (current_view gates it on
+                    // filter_input_open). Re-uses `set_filter_query` so the
+                    // matched set + scroll reset.
                     let q = match &self.result_filter {
                         Some(f) => format!("{}{c}", f.query),
                         None => c.to_string(),
@@ -698,15 +714,16 @@ impl App {
     /// resets to the top.
     fn set_filter_query(&mut self, query: &str) {
         // ponytail: one frizbee call returns both the ordered matched rows and
-        // the per-row matched byte offsets (for the FZF-style highlight).
+        // the per-row matched cells (col + within-cell offsets, for the glow).
         let pairs = match &self.output {
             Output::Table { rows, .. } => crate::filter::fuzzy_filter_indices(query, rows),
             _ => Vec::new(),
         };
         let matched: Vec<usize> = pairs.iter().map(|(i, _)| *i).collect();
-        let offsets: std::collections::HashMap<usize, Vec<usize>> =
+        let offsets: std::collections::HashMap<usize, CellMatches> =
             pairs.into_iter().collect();
         self.result_filter = Some(ResultFilter { query: query.to_string(), matched, offsets });
+        self.filter_input_open = true;
         self.result_cursor_row = None;
         self.result_scroll_row = 0;
     }
@@ -715,6 +732,7 @@ impl App {
     /// so the user doesn't jump to a now-stale index.
     fn clear_filter(&mut self) {
         self.result_filter = None;
+        self.filter_input_open = false;
         self.result_cursor_row = None;
         self.result_scroll_row = 0;
     }
@@ -1746,15 +1764,58 @@ mod tests {
     #[test]
     fn results_filter_backspace_edits_query() {
         let mut app = results_app(30, 2, 5, 2);
+        // set_filter_query opens the input mode, so Backspace works directly.
         app.set_filter_query("15");
-        // simulate FilterBackspace
-        press(&mut app, KeyCode::Char('/')); // re-open (toggles off then on? no — already on, so toggles OFF)
-        // re-open cleanly:
-        app.set_filter_query("15");
+        assert!(app.filter_input_open);
         app.handle_key(KeyEvent::new_with_kind_and_state(
             KeyCode::Backspace, KeyModifiers::NONE, KeyEventKind::Press, KeyEventState::NONE,
         ));
         assert_eq!(app.result_filter.as_ref().unwrap().query, "1");
+    }
+
+    #[test]
+    fn results_filter_accept_keeps_filter_closes_input() {
+        let mut app = results_app(30, 2, 5, 2);
+        app.set_filter_query("5"); // opens input, matches 3 rows
+        assert!(app.filter_input_open);
+        assert!(app.result_filter.is_some());
+        let matched = app.displayed_count();
+        assert_eq!(matched, 3);
+        // Enter commits: closes the input but keeps the filter applied.
+        press(&mut app, KeyCode::Enter);
+        assert!(!app.filter_input_open, "accept closes the input mode");
+        assert!(app.result_filter.is_some(), "accept keeps the filter applied");
+        assert_eq!(app.displayed_count(), matched, "filtered set unchanged after accept");
+    }
+
+    #[test]
+    fn results_filter_reopen_edits_committed_query() {
+        let mut app = results_app(30, 2, 5, 2);
+        app.set_filter_query("5");
+        press(&mut app, KeyCode::Enter); // accept → input closed, filter applied
+        assert!(!app.filter_input_open);
+        assert!(app.result_filter.is_some());
+        // `/` re-opens the input with the existing query, for editing.
+        press(&mut app, KeyCode::Char('/'));
+        assert!(app.filter_input_open, "/ re-opens the input on a committed filter");
+        assert_eq!(app.result_filter.as_ref().unwrap().query, "5");
+        // `/` again (input open) cancels — clears the filter entirely.
+        press(&mut app, KeyCode::Char('/'));
+        assert!(app.result_filter.is_none());
+        assert!(!app.filter_input_open);
+    }
+
+    #[test]
+    fn results_filter_backspace_no_op_when_input_closed() {
+        let mut app = results_app(30, 2, 5, 2);
+        app.set_filter_query("5");
+        press(&mut app, KeyCode::Enter); // accept → input closed
+        let q_before = app.result_filter.as_ref().unwrap().query.clone();
+        // Backspace with input closed must NOT edit the query.
+        app.handle_key(KeyEvent::new_with_kind_and_state(
+            KeyCode::Backspace, KeyModifiers::NONE, KeyEventKind::Press, KeyEventState::NONE,
+        ));
+        assert_eq!(app.result_filter.as_ref().unwrap().query, q_before);
     }
 
     #[test]

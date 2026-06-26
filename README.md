@@ -41,7 +41,7 @@ cargo run -- query.sql
 | `Ctrl+R` / `F5` / `Option+Enter` | run SQL in the editor |
 | `Shift+Up` / `Shift+Down` | recall older / newer query (in the editor) |
 | `y` (Results) | copy the cursor row as JSON to the clipboard (the highlighted cell's row) |
-| `/` (Results) | open a fuzzy filter (`neo_frizbee`); type to narrow rows live, `Enter` accept · `Esc` cancel |
+| `/` (Results) | open a fuzzy filter (`neo_frizbee`, per-cell); type to narrow live, `Enter` commits (keeps filter, nav resumes) · `Esc`/`/` cancel · `/` re-opens to edit |
 | `d` (Results) | deselect — drop the row highlight (copy/nav re-select on the next move) |
 | mouse click (Results) | select the clicked cell; clears any active filter |
 | `Ctrl+S` (Results) | export the whole (unfiltered) result set as CSV to the clipboard |
