@@ -5,6 +5,7 @@ mod db;
 mod editor;
 mod highlight;
 mod ui;
+mod shortcuts;
 
 use std::io;
 

@@ -13,6 +13,7 @@ use crate::db::{self, Connection, Database, ExecutionResult};
 use crate::autocomplete;
 use crate::editor::Editor;
 use crate::ui;
+use crate::shortcuts::{self, Action, View};
 
 type Term = Terminal<CrosstermBackend<Stdout>>;
 
@@ -337,52 +338,33 @@ impl App {
         // the status bar. Lets us see what tmux actually forwards instead of
         // guessing about Shift+Enter / Kitty-protocol passthrough.
         self.last_key = Some(format_key_event(&key));
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-        if ctrl && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('q')) {
-            self.running = false;
+        // Resolve the active view (modal > focus > autocomplete sub-mode) and
+        // dispatch through the keymap. A matched shortcut → `apply_action`; a
+        // miss → raw text input (typing into the editor / a form field).
+        let view = shortcuts::current_view(
+            self.focus,
+            self.form.is_some(),
+            self.features_open,
+            self.confirm_destructive.is_some(),
+            self.autocomplete.is_some(),
+        );
+        if let Some(action) = shortcuts::match_key(view, key) {
+            self.apply_action(view, action);
             return;
         }
-        // Run query: Ctrl+R / F5 / Option+Enter. Shift+Enter collapses to a
-        // plain Enter through tmux+ghostty (no SHIFT modifier forwarded), but
-        // Option+Enter arrives as Enter+ALT, so bind the editor submit to that.
-        if (ctrl && key.code == KeyCode::Char('r')) || key.code == KeyCode::F(5) || (alt && key.code == KeyCode::Enter) {
-            self.run_query();
-            return;
-        }
-        if self.confirm_destructive.is_some() {
-            self.handle_confirm_destructive(key);
-            return;
-        }
-        if self.form.is_some() {
-            self.handle_form(key);
-            return;
-        }
-        if self.features_open {
-            self.handle_features(key);
-            return;
-        }
-        // ponytail: autocomplete popup navigation/accept while editing.
-        if self.focus == Focus::Editor && self.autocomplete.is_some() {
-            match key.code {
-                KeyCode::Tab | KeyCode::Enter => { self.accept_completion(); return; }
-                KeyCode::Down => { self.move_completion(1); return; }
-                KeyCode::Up => { self.move_completion(-1); return; }
-                KeyCode::Esc => { self.autocomplete = None; return; }
-                _ => {}
-            }
-        }
-        // ponytail: Shift+Up/Shift+Down recall query history in the editor.
-        // Plain Up/Down stay line-cursor moves; autocomplete uses those too,
-        // so this is shift-gated to avoid clashing with either. (Ctrl+Up/Down
-        // was the first choice but collides with terminal/tmux scrollback.)
-        if self.focus == Focus::Editor && shift && matches!(key.code, KeyCode::Up | KeyCode::Down) {
-            self.recall_history(key.code == KeyCode::Up);
-            return;
-        }
-        match key.code {
-            KeyCode::Tab => {
+        self.handle_text_input(view, key);
+    }
+
+    /// The single place that maps an `Action` → mutation. `view` selects the
+    /// per-pane behavior of the shared nav actions (MoveDown etc.); everything
+    /// else is action-specific. Adding behavior = add an arm here + a binding
+    /// in `shortcuts`; this dispatcher itself never changes.
+    fn apply_action(&mut self, view: View, action: Action) {
+        use Action::*;
+        match action {
+            Quit => self.running = false,
+            RunQuery => self.run_query(),
+            FocusNext => {
                 self.autocomplete = None;
                 self.focus = match self.focus {
                     Focus::Connections => Focus::Editor,
@@ -391,49 +373,253 @@ impl App {
                     Focus::Schema => Focus::Connections,
                 };
             }
-            // lazygit-style pane jump: 1/2/3 focus Connections/Editor/Results.
-            // Skipped while editing so digits type into the SQL editor.
-            KeyCode::Char(c) if c.is_ascii_digit() && self.focus != Focus::Editor => {
-                self.autocomplete = None;
-                match c {
-                    '1' => self.focus = Focus::Connections,
-                    '2' => self.focus = Focus::Editor,
-                    '3' => self.focus = Focus::Results,
-                    '4' => self.focus = Focus::Schema,
-                    _ => {}
+            FocusConnections => { self.autocomplete = None; self.focus = Focus::Connections; }
+            FocusEditor => { self.autocomplete = None; self.focus = Focus::Editor; }
+            FocusResults => { self.autocomplete = None; self.focus = Focus::Results; }
+            FocusSchema => { self.autocomplete = None; self.focus = Focus::Schema; }
+            ToggleKeyLog => self.debug_keys = !self.debug_keys,
+            ToggleFeatures => { self.features_open = true; self.feature_cursor = 0; }
+
+            // Shared list nav — behavior selected per view.
+            MoveDown => match view {
+                View::Connections => {
+                    let n = self.config.connections.len();
+                    if n > 0 && self.conn_cursor + 1 < n { self.conn_cursor += 1; }
                 }
+                View::Results => {
+                    let last = match &self.output {
+                        Output::Table { rows, .. } => rows.len().saturating_sub(1),
+                        _ => return,
+                    };
+                    self.result_row_off = self.result_row_off.saturating_add(1).min(last);
+                }
+                View::Schema => {
+                    let rows = self.schema_rows();
+                    if !rows.is_empty() {
+                        let last = rows.len() - 1;
+                        self.schema_cursor = self.schema_cursor.saturating_add(1).min(last);
+                    }
+                }
+                _ => {}
             },
-            KeyCode::Char('?') if self.focus != Focus::Editor => self.debug_keys = !self.debug_keys,
-            KeyCode::Char('f') if self.focus != Focus::Editor => {
-                self.features_open = true;
-                self.feature_cursor = 0;
+            MoveUp => match view {
+                View::Connections => {
+                    let n = self.config.connections.len();
+                    if n > 0 && self.conn_cursor > 0 { self.conn_cursor -= 1; }
+                }
+                View::Results => self.result_row_off = self.result_row_off.saturating_sub(1),
+                View::Schema => self.schema_cursor = self.schema_cursor.saturating_sub(1),
+                _ => {}
+            },
+            // Results-only nav — only bound in the Results view, so the
+            // keymap already routes them here; no per-view switch needed.
+            MoveRight => {
+                let last = match &self.output {
+                    Output::Table { columns, .. } => columns.len().saturating_sub(1),
+                    _ => return,
+                };
+                self.result_col_off = self.result_col_off.saturating_add(1).min(last);
             }
-            KeyCode::Char('q') if self.focus != Focus::Editor => self.running = false,
-            _ => match self.focus {
-                Focus::Connections => self.handle_connections(key),
-                Focus::Editor => self.handle_editor(key),
-                Focus::Results => self.handle_results(key),
-                Focus::Schema => self.handle_schema(key),
-            },
+            MoveLeft => self.result_col_off = self.result_col_off.saturating_sub(1),
+            PageDown => {
+                let last = match &self.output {
+                    Output::Table { rows, .. } => rows.len().saturating_sub(1),
+                    _ => return,
+                };
+                self.result_row_off = self.result_row_off.saturating_add(10).min(last);
+            }
+            PageUp => self.result_row_off = self.result_row_off.saturating_sub(10),
+            Home => self.result_row_off = 0,
+            End => {
+                let last = match &self.output {
+                    Output::Table { rows, .. } => rows.len().saturating_sub(1),
+                    _ => return,
+                };
+                self.result_row_off = last;
+            }
+
+            ConnectSelected => self.connect_selected(),
+            NewConnection => self.form = Some(FormState::new()),
+            DeleteConnection => self.delete_selected(),
+
+            EditorNewline => { self.exit_history_browse(); self.editor.newline(); }
+            EditorBackspace => { self.exit_history_browse(); self.editor.backspace(); self.refresh_autocomplete(); }
+            EditorLeft => { self.editor.left(); self.refresh_autocomplete(); }
+            EditorRight => { self.editor.right(); self.refresh_autocomplete(); }
+            EditorUp => self.editor.up(),
+            EditorDown => self.editor.down(),
+            EditorHome => self.editor.home(),
+            EditorEnd => self.editor.end(),
+            RecallHistoryOlder => self.recall_history(true),
+            RecallHistoryNewer => self.recall_history(false),
+
+            AcceptCompletion => self.accept_completion(),
+            CompletionNext => self.move_completion(1),
+            CompletionPrev => self.move_completion(-1),
+            DismissCompletion => self.autocomplete = None,
+
+            CopyRowJson => self.copy_row_json(),
+            CopyResultCsv => self.copy_result_csv(),
+
+            SchemaExpand => self.schema_expand_or_run(),
+            SchemaCollapse => self.schema_collapse_at_cursor(),
+
+            FormSave => self.save_form(),
+            FormCancel => self.form = None,
+            FormFieldNext => self.form_field_next(1),
+            FormFieldPrev => self.form_field_next(-1),
+            FormFieldLeft => self.form_field_left(),
+            FormFieldRight => self.form_field_right(),
+            FormFieldHome => self.form_field_home(),
+            FormFieldEnd => self.form_field_end(),
+            FormFieldBackspace => self.form_field_backspace(),
+
+            FeaturesClose => self.features_open = false,
+            FeaturesNext => self.features_move(1),
+            FeaturesPrev => self.features_move(-1),
+            FeaturesToggle => self.features_toggle(),
+
+            ConfirmYes => {
+                if let Some(sql) = self.confirm_destructive.take() {
+                    self.execute_sql(sql);
+                }
+            }
+            ConfirmNo => {
+                self.confirm_destructive = None;
+                self.status = "Query cancelled.".into();
+            }
         }
     }
 
-    fn handle_connections(&mut self, key: KeyEvent) {
-        let n = self.config.connections.len();
-        match key.code {
-            KeyCode::Down | KeyCode::Char('j') if n > 0 && self.conn_cursor + 1 < n => {
-                self.conn_cursor += 1;
+    /// Fall-through for keys that aren't any view's shortcut: typing a char
+    /// into the SQL editor / a form field. Non-editable views ignore it.
+    fn handle_text_input(&mut self, view: View, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if let KeyCode::Char(c) = key.code {
+            if ctrl { return; }
+            match view {
+                View::Editor | View::EditorAutocomplete => {
+                    self.exit_history_browse();
+                    self.editor.insert_char(c);
+                    self.refresh_autocomplete();
+                }
+                View::Form => {
+                    if let Some(f) = self.form.as_mut() {
+                        f.fields[f.active].insert(f.cursor, c);
+                        f.cursor += 1;
+                    }
+                }
+                _ => {}
             }
-            KeyCode::Up | KeyCode::Char('k') if n > 0 && self.conn_cursor > 0 => {
-                self.conn_cursor -= 1;
-            }
-            KeyCode::Enter if n > 0 => self.connect_selected(),
-            KeyCode::Char('n') => self.form = Some(FormState::new()),
-            KeyCode::Char('d') if n > 0 => self.delete_selected(),
-            _ => {}
         }
     }
 
+    fn copy_row_json(&mut self) {
+        let json = match &self.output {
+            Output::Table { columns, rows, .. } => match rows.get(self.result_row_off) {
+                Some(row) => row_to_json(columns, row),
+                None => return,
+            },
+            _ => return,
+        };
+        self.status = match copy_to_clipboard(&json) {
+            Ok(()) => format!("Copied row {} as JSON.", self.result_row_off + 1),
+            Err(e) => format!("Copy failed: {e}"),
+        };
+    }
+
+    fn copy_result_csv(&mut self) {
+        let (csv, n) = match &self.output {
+            Output::Table { columns, rows, .. } => (result_to_csv(columns, rows), rows.len()),
+            _ => return,
+        };
+        self.status = match copy_to_clipboard(&csv) {
+            Ok(()) => format!("Copied {} rows as CSV ({} bytes).", n, csv.len()),
+            Err(e) => format!("Copy failed: {e}"),
+        };
+    }
+
+    /// Schema: Enter/l/Right on a table expands it; on a leaf it generates the
+    /// query, prefills the editor, jumps to Results and runs it.
+    fn schema_expand_or_run(&mut self) {
+        match self.schema_entry_at_cursor() {
+            Some(SchemaEntry::Table(t)) => { self.schema_expanded.insert(t); }
+            Some(SchemaEntry::Leaf { table, opt }) => {
+                let sql = schema_query(&table, opt);
+                self.editor = Editor::from_text(sql);
+                self.focus = Focus::Results;
+                self.run_query();
+            }
+            None => {}
+        }
+    }
+
+    /// Schema: h/Left collapses the table at the cursor (or the parent of a
+    /// leaf) and parks the cursor on the table row.
+    fn schema_collapse_at_cursor(&mut self) {
+        if let Some(t) = self.schema_table_at_cursor() {
+            self.schema_expanded.remove(&t);
+            self.schema_cursor_to_table(&t);
+        }
+    }
+
+    fn form_field_next(&mut self, dir: i32) {
+        let Some(form) = self.form.as_mut() else { return; };
+        let last = FormState::LABELS.len() - 1;
+        form.active = if dir > 0 {
+            if form.active == last { 0 } else { form.active + 1 }
+        } else if form.active == 0 {
+            last
+        } else {
+            form.active - 1
+        };
+        form.cursor = form.fields[form.active].len();
+    }
+
+    fn form_field_left(&mut self) {
+        if let Some(f) = self.form.as_mut() {
+            f.cursor = f.cursor.saturating_sub(1);
+        }
+    }
+    fn form_field_right(&mut self) {
+        if let Some(f) = self.form.as_mut() {
+            f.cursor = (f.cursor + 1).min(f.fields[f.active].len());
+        }
+    }
+    fn form_field_home(&mut self) {
+        if let Some(f) = self.form.as_mut() { f.cursor = 0; }
+    }
+    fn form_field_end(&mut self) {
+        if let Some(f) = self.form.as_mut() { f.cursor = f.fields[f.active].len(); }
+    }
+    fn form_field_backspace(&mut self) {
+        if let Some(f) = self.form.as_mut()
+            && f.cursor > 0
+        {
+            f.cursor -= 1;
+            f.fields[f.active].remove(f.cursor);
+        }
+    }
+
+    fn features_move(&mut self, dir: i32) {
+        let last = Features::LIST.len().saturating_sub(1);
+        self.feature_cursor = if dir > 0 {
+            if self.feature_cursor >= last { 0 } else { self.feature_cursor + 1 }
+        } else {
+            if self.feature_cursor == 0 { last } else { self.feature_cursor - 1 }
+        };
+    }
+
+    fn features_toggle(&mut self) {
+        let i = self.feature_cursor;
+        let v = !self.config.features.get(i);
+        self.config.features.set(i, v);
+        let name = Features::LIST[i].0;
+        self.status = match self.config.save() {
+            Ok(()) => format!("{name}: {}", if v { "on" } else { "off" }),
+            Err(e) => format!("Toggle failed: {e}"),
+        };
+    }
 
     /// Recall a query from history into the editor. `older` = Ctrl+Up,
     /// `!older` = Ctrl+Down. On entering browse mode the current editor
@@ -482,24 +668,6 @@ impl App {
     fn exit_history_browse(&mut self) {
         self.history_cursor = None;
         self.history_draft = None;
-    }
-    fn handle_editor(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.exit_history_browse();
-                self.editor.insert_char(c);
-                self.refresh_autocomplete();
-            }
-            KeyCode::Enter => { self.exit_history_browse(); self.editor.newline(); }
-            KeyCode::Backspace => { self.exit_history_browse(); self.editor.backspace(); self.refresh_autocomplete(); }
-            KeyCode::Left => { self.editor.left(); self.refresh_autocomplete(); }
-            KeyCode::Right => { self.editor.right(); self.refresh_autocomplete(); }
-            KeyCode::Up => self.editor.up(),
-            KeyCode::Down => self.editor.down(),
-            KeyCode::Home => self.editor.home(),
-            KeyCode::End => self.editor.end(),
-            _ => {}
-        }
     }
 
     /// Recompute the autocomplete popup from the identifier at the cursor.
@@ -634,64 +802,6 @@ impl App {
         }
     }
 
-    fn handle_results(&mut self, key: KeyEvent) {
-        // ponytail: y copies the selected row (result_row_off) as JSON to the
-        // clipboard; Ctrl+S exports the whole result set as CSV. Both shell out
-        // to the platform clipboard tool — see copy_to_clipboard.
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        if key.code == KeyCode::Char('s') && ctrl {
-            if let Output::Table { columns, rows, .. } = &self.output {
-                let csv = result_to_csv(columns, rows);
-                match copy_to_clipboard(&csv) {
-                    Ok(()) => self.status = format!("Copied {} rows as CSV ({} bytes).", rows.len(), csv.len()),
-                    Err(e) => self.status = format!("Copy failed: {e}"),
-                }
-            }
-            return;
-        }
-        if key.code == KeyCode::Char('y') && !ctrl {
-            if let Output::Table { columns, rows, .. } = &self.output {
-                if let Some(row) = rows.get(self.result_row_off) {
-                    let json = row_to_json(columns, row);
-                    match copy_to_clipboard(&json) {
-                        Ok(()) => self.status = format!("Copied row {} as JSON.", self.result_row_off + 1),
-                        Err(e) => self.status = format!("Copy failed: {e}"),
-                    }
-                }
-            }
-            return;
-        }
-        let (nrows, ncols) = match &self.output {
-            Output::Table { columns, rows, .. } => (rows.len(), columns.len()),
-            _ => return,
-        };
-        let last_row = nrows.saturating_sub(1);
-        let last_col = ncols.saturating_sub(1);
-        match key.code {
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.result_row_off = self.result_row_off.saturating_add(1).min(last_row);
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.result_row_off = self.result_row_off.saturating_sub(1);
-            }
-            KeyCode::Right | KeyCode::Char('l') => {
-                self.result_col_off = self.result_col_off.saturating_add(1).min(last_col);
-            }
-            KeyCode::Left | KeyCode::Char('h') => {
-                self.result_col_off = self.result_col_off.saturating_sub(1);
-            }
-            KeyCode::PageDown => {
-                self.result_row_off = self.result_row_off.saturating_add(10).min(last_row);
-            }
-            KeyCode::PageUp => {
-                self.result_row_off = self.result_row_off.saturating_sub(10);
-            }
-            KeyCode::Home => self.result_row_off = 0,
-            KeyCode::End => self.result_row_off = last_row,
-            _ => {}
-        }
-    }
-
     /// Flat display rows for the schema pane: a table row, then (when expanded)
     /// its 4 fixed leaf options. Tables sorted for stable order.
     /// ponytail: rebuilt each call (schema is small); shared by draw + handle.
@@ -731,43 +841,6 @@ impl App {
         }
     }
 
-    fn handle_schema(&mut self, key: KeyEvent) {
-        let rows = self.schema_rows();
-        if rows.is_empty() {
-            return;
-        }
-        let last = rows.len() - 1;
-        match key.code {
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.schema_cursor = self.schema_cursor.saturating_add(1).min(last);
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.schema_cursor = self.schema_cursor.saturating_sub(1);
-            }
-            // Enter / l / Right: expand a table, or run a leaf's query.
-            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
-                match self.schema_entry_at_cursor() {
-                    Some(SchemaEntry::Table(t)) => { self.schema_expanded.insert(t); }
-                    Some(SchemaEntry::Leaf { table, opt }) => {
-                        let sql = schema_query(&table, opt);
-                        self.editor = Editor::from_text(sql);
-                        self.focus = Focus::Results;
-                        self.run_query();
-                    }
-                    None => {}
-                }
-            }
-            // h / Left: collapse the table at the cursor (or its parent leaf's table).
-            KeyCode::Left | KeyCode::Char('h') => {
-                if let Some(t) = self.schema_table_at_cursor() {
-                    self.schema_expanded.remove(&t);
-                    self.schema_cursor_to_table(&t);
-                }
-            }
-            _ => {}
-        }
-    }
-
     /// Mouse wheel / trackpad scrolls the results pane — but only when the
     /// cursor is over it (lazygit-style: scroll the pane you hover). The
     /// results rect is recorded by `ui::draw` each frame.
@@ -804,94 +877,6 @@ impl App {
         }
     }
 
-    fn handle_form(&mut self, key: KeyEvent) {
-        // Esc / Enter are handled before borrowing `self.form`.
-        match key.code {
-            KeyCode::Esc => {
-                self.form = None;
-                return;
-            }
-            KeyCode::Enter => {
-                self.save_form();
-                return;
-            }
-            _ => {}
-        }
-        let form = self.form.as_mut().unwrap();
-        let last = FormState::LABELS.len() - 1;
-        match key.code {
-            KeyCode::Tab | KeyCode::Down => {
-                form.active = if form.active == last { 0 } else { form.active + 1 };
-                form.cursor = form.fields[form.active].len();
-            }
-            KeyCode::BackTab | KeyCode::Up => {
-                form.active = if form.active == 0 { last } else { form.active - 1 };
-                form.cursor = form.fields[form.active].len();
-            }
-            KeyCode::Left if form.cursor > 0 => form.cursor -= 1,
-            KeyCode::Right if form.cursor < form.fields[form.active].len() => form.cursor += 1,
-            KeyCode::Home => form.cursor = 0,
-            KeyCode::End => form.cursor = form.fields[form.active].len(),
-            KeyCode::Backspace if form.cursor > 0 => {
-                form.cursor -= 1;
-                form.fields[form.active].remove(form.cursor);
-            }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                form.fields[form.active].insert(form.cursor, c);
-                form.cursor += 1;
-            }
-            _ => {}
-        }
-    }
-
-    /// Features modal: j/k move, Space/Enter toggles (+ persists), Esc/f/q close.
-    fn handle_features(&mut self, key: KeyEvent) {
-        let last = Features::LIST.len().saturating_sub(1);
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('f') | KeyCode::Char('q') => {
-                self.features_open = false;
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.feature_cursor = if self.feature_cursor >= last {
-                    0
-                } else {
-                    self.feature_cursor + 1
-                };
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.feature_cursor = if self.feature_cursor == 0 {
-                    last
-                } else {
-                    self.feature_cursor - 1
-                };
-            }
-            KeyCode::Char(' ') | KeyCode::Enter => {
-                let i = self.feature_cursor;
-                let v = !self.config.features.get(i);
-                self.config.features.set(i, v);
-                let name = Features::LIST[i].0;
-                self.status = match self.config.save() {
-                    Ok(()) => format!("{name}: {}", if v { "on" } else { "off" }),
-                    Err(e) => format!("Toggle failed: {e}"),
-                };
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_confirm_destructive(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                let sql = self.confirm_destructive.take().unwrap();
-                self.execute_sql(sql);
-            }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                self.confirm_destructive = None;
-                self.status = "Query cancelled.".into();
-            }
-            _ => {}
-        }
-    }
 }
 
 /// ponytail: word-boundary check for destructive SQL commands. Splits on

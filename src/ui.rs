@@ -11,15 +11,18 @@ use ratatui::{
 use crate::app::{App, Focus, FormState, Output, SchemaEntry, SchemaOpt};
 use crate::config::Features;
 use crate::highlight;
+use crate::shortcuts;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let main_chunks =
         Layout::default().direction(Direction::Vertical).constraints([
             Constraint::Min(3),
-            Constraint::Length(1),
+            Constraint::Length(1), // shortcuts bar — active view's keymap
+            Constraint::Length(1), // status / log line
         ]).split(f.area());
     let main = main_chunks[0];
-    let status = main_chunks[1];
+    let shortcuts_bar = main_chunks[1];
+    let status = main_chunks[2];
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
@@ -41,6 +44,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_schema(f, &*app, left[1]);
     draw_editor(f, &*app, right[0]);
     draw_results(f, &mut *app, right[1]);
+    draw_shortcuts_bar(f, &*app, shortcuts_bar);
     draw_status(f, &*app, status);
 
     if let Some(form) = &app.form {
@@ -379,17 +383,41 @@ mod tests {
     }
 }
 
+fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
+    // The bottom keybar shows only the shortcuts active in the current view
+    // (view-specific + common pane chrome + global), so the hint always
+    // matches what the keys actually do right now. Modals and the editor
+    // autocomplete sub-mode each surface their own set.
+    let view = shortcuts::current_view(
+        app.focus,
+        app.form.is_some(),
+        app.features_open,
+        app.confirm_destructive.is_some(),
+        app.autocomplete.is_some(),
+    );
+    let mut spans: Vec<Span> = vec![Span::raw(" ")];
+    for (i, b) in shortcuts::bar_bindings(view).enumerate() {
+        if i > 0 { spans.push(Span::raw("  ")); }
+        spans.push(Span::styled(
+            b.keys_display(),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(b.label, Style::default().fg(Color::DarkGray)));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let conn = app.db_name.clone().unwrap_or_else(|| "not connected".into());
     let spinner = if app.running_query { " ⏳" } else { "" };
     let left = format!(" {conn}{spinner} | {} ", app.status);
-    // ponytail: when the `?` key-log is on, show the last KeyEvent crossterm
-    // produced so we can see exactly what tmux/ghostty forwards (e.g.
-    // Option+Enter should read key=Enter mods=--A-). Help text otherwise.
+    // ponytail: the key-log inspector shares this line (right side). The
+    // shortcut hints moved up to the dedicated shortcuts bar.
     let right = if app.debug_keys {
         format!(" {} ", app.last_key.as_deref().unwrap_or("(none)"))
     } else {
-        " Tab: focus  Enter: connect  n: new  d: delete  4: schema  Ctrl+R/Opt+Enter: run  Results: y copy row  Ctrl+S CSV  f: features  ? key-log  Ctrl+Q: quit ".to_owned()
+        String::new()
     };
     let line = Line::from(vec![
         Span::raw(left),
