@@ -418,11 +418,10 @@ fn draw_table(
 
     let table = Table::new(data_rows, col_widths)
         .header(header)
-        // row + column + cell highlight: only the bg is set so cell spans keep
-        // their own fg — that lets the FZF-style matched-char (Yellow+bold)
-        // glow show through even on the selected row/column/cell. The Gray
-        // guides + Cyan cell bg alone mark selection clearly; forcing fg
-        // would clobber the matched-char color.
+        // REVERSED for all three highlight levels so selection is always
+        // readable regardless of terminal theme (dark or light). The cell
+        // content spans (including matched-char Magenta+bold) still show
+        // through because ratatui merges highlight styles with cell styles.
         .row_highlight_style(theme::ROW_HIGHLIGHT)
         .column_highlight_style(theme::COLUMN_HIGHLIGHT)
         .cell_highlight_style(theme::CELL_HIGHLIGHT)

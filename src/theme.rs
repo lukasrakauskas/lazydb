@@ -9,19 +9,19 @@ pub const UNFOCUSED_BADGE: Style = Style::new().fg(Color::Reset);
 // ── Connections ──────────────────────────────────────────────────────
 pub const ACTIVE_CONNECTION: Style = Style::new().fg(Color::Green);
 pub const CONNECTION_HIGHLIGHT: Style =
-    Style::new().bg(Color::Gray).fg(Color::Black).add_modifier(Modifier::BOLD);
+    Style::new().add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED);
 
 // ── Schema ───────────────────────────────────────────────────────────
-pub const SCHEMA_CURSOR: Style = Style::new().bg(Color::Cyan).fg(Color::Black);
+pub const SCHEMA_CURSOR: Style = Style::new().add_modifier(Modifier::REVERSED);
 
 // ── Autocomplete ─────────────────────────────────────────────────────
-pub const AUTOCOMPLETE_CURSOR: Style = Style::new().bg(Color::Cyan).fg(Color::Black);
+pub const AUTOCOMPLETE_CURSOR: Style = Style::new().add_modifier(Modifier::REVERSED);
 pub const AUTOCOMPLETE_ITEM: Style = Style::new().bg(Color::DarkGray).fg(Color::White);
 
 // ── Results table ────────────────────────────────────────────────────
-pub const ROW_HIGHLIGHT: Style = Style::new().bg(Color::Gray);
-pub const COLUMN_HIGHLIGHT: Style = Style::new().bg(Color::Gray);
-pub const CELL_HIGHLIGHT: Style = Style::new().bg(Color::Cyan);
+pub const ROW_HIGHLIGHT: Style = Style::new().add_modifier(Modifier::REVERSED);
+pub const COLUMN_HIGHLIGHT: Style = Style::new().add_modifier(Modifier::REVERSED);
+pub const CELL_HIGHLIGHT: Style = Style::new().add_modifier(Modifier::REVERSED);
 
 // ── Filter bar ───────────────────────────────────────────────────────
 pub const FILTER_PROMPT: Style = Style::new().fg(Color::Blue).add_modifier(Modifier::BOLD);
@@ -37,12 +37,12 @@ pub const SHORTCUT_LABEL: Style = Style::new().fg(Color::DarkGray);
 
 // ── Form modal ───────────────────────────────────────────────────────
 pub const FORM_BORDER: Style = Style::new().fg(Color::Blue);
-pub const FORM_ACTIVE_FIELD: Style = Style::new().fg(Color::Black).bg(Color::Cyan);
+pub const FORM_ACTIVE_FIELD: Style = Style::new().add_modifier(Modifier::REVERSED);
 pub const FORM_LABEL: Style = Style::new().fg(Color::Gray);
 
 // ── Features modal ───────────────────────────────────────────────────
 pub const FEATURES_BORDER: Style = Style::new().fg(Color::Blue);
-pub const FEATURE_CURSOR: Style = Style::new().fg(Color::Black).bg(Color::Cyan);
+pub const FEATURE_CURSOR: Style = Style::new().add_modifier(Modifier::REVERSED);
 pub const FEATURE_TOGGLE_ON: Style = Style::new().fg(Color::Green);
 pub const FEATURE_TOGGLE_OFF: Style = Style::new().fg(Color::DarkGray);
 pub const FEATURE_DESC: Style = Style::new().fg(Color::DarkGray);
