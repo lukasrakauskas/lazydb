@@ -4,7 +4,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use ratatui::layout::Rect;
 
@@ -50,6 +50,33 @@ pub enum Output {
         rows_affected: u64,
         elapsed_ms: u128,
     },
+}
+
+/// Last-rendered geometry of the results table body, used to map a mouse
+// click to an absolute `(row, col)`. Recorded by `ui::draw_table` each frame
+// (like `results_rect`); the click handler reads it back.
+pub struct ResultsClickGeom {
+    pub body: Rect,
+    /// `(abs_col, x_start, width)` for each visible data column, in order.
+    pub cols: Vec<(usize, u16, u16)>,
+}
+
+/// Map a click at screen `(x, y)` to `(row, col)` using the last-rendered
+// table geometry. `row` is `Some` only for body clicks; `col` is `Some` when
+// the click lands on a data column (body or header) — clicks in the row-num
+// column or inter-column gaps yield `None` so that axis is left unchanged.
+pub fn click_to_cell(geom: &ResultsClickGeom, scroll_row: usize, x: u16, y: u16) -> (Option<usize>, Option<usize>) {
+    let col = geom
+        .cols
+        .iter()
+        .find(|(_, xs, w)| x >= *xs && x < *xs + *w)
+        .map(|(c, _, _)| *c);
+    let row = if y >= geom.body.y && y < geom.body.y + geom.body.height {
+        Some(scroll_row + (y - geom.body.y) as usize)
+    } else {
+        None
+    };
+    (row, col)
 }
 
 enum Job {
@@ -107,9 +134,16 @@ pub struct App {
     pub form: Option<FormState>,
     rx: Option<Receiver<JobResult>>,
     pub status: String,
-    pub result_row_off: usize,
-    pub result_col_off: usize,
+    pub result_cursor_row: usize,
+    pub result_scroll_row: usize,
+    pub result_cursor_col: usize,
+    pub result_scroll_col: usize,
+    /// Visible data-row / data-col counts from the last render, used by the
+    // nav handlers for auto-follow and page size. Set by `ui::draw_table`.
+    pub results_body_h: usize,
+    pub results_visible_cols: usize,
     pub results_rect: Option<Rect>,
+    pub results_click_geom: Option<ResultsClickGeom>,
     pub features_open: bool,
     pub feature_cursor: usize,
     pub confirm_destructive: Option<String>,
@@ -149,9 +183,14 @@ impl App {
             form: None,
             rx: None,
             status: "Press 'n' to add a connection, then Enter to connect.".into(),
-            result_row_off: 0,
-            result_col_off: 0,
+            result_cursor_row: 0,
+            result_scroll_row: 0,
+            result_cursor_col: 0,
+            result_scroll_col: 0,
+            results_body_h: 0,
+            results_visible_cols: 0,
             results_rect: None,
+            results_click_geom: None,
             features_open: false,
             feature_cursor: 0,
             confirm_destructive: None,
@@ -240,8 +279,10 @@ impl App {
         self.running_query = true;
         self.query_start = Some(Instant::now());
         self.status = "Running query…".into();
-        self.result_row_off = 0;
-        self.result_col_off = 0;
+        self.result_cursor_row = 0;
+        self.result_scroll_row = 0;
+        self.result_cursor_col = 0;
+        self.result_scroll_col = 0;
     }
 
     fn save_form(&mut self) {
@@ -391,7 +432,8 @@ impl App {
                         Output::Table { rows, .. } => rows.len().saturating_sub(1),
                         _ => return,
                     };
-                    self.result_row_off = self.result_row_off.saturating_add(1).min(last);
+                    self.result_cursor_row = self.result_cursor_row.saturating_add(1).min(last);
+                    self.scroll_cursor_row_into_view();
                 }
                 View::Schema => {
                     let rows = self.schema_rows();
@@ -407,7 +449,10 @@ impl App {
                     let n = self.config.connections.len();
                     if n > 0 && self.conn_cursor > 0 { self.conn_cursor -= 1; }
                 }
-                View::Results => self.result_row_off = self.result_row_off.saturating_sub(1),
+                View::Results => {
+                    self.result_cursor_row = self.result_cursor_row.saturating_sub(1);
+                    self.scroll_cursor_row_into_view();
+                }
                 View::Schema => self.schema_cursor = self.schema_cursor.saturating_sub(1),
                 _ => {}
             },
@@ -418,24 +463,33 @@ impl App {
                     Output::Table { columns, .. } => columns.len().saturating_sub(1),
                     _ => return,
                 };
-                self.result_col_off = self.result_col_off.saturating_add(1).min(last);
+                self.result_cursor_col = self.result_cursor_col.saturating_add(1).min(last);
+                self.scroll_cursor_col_into_view();
             }
-            MoveLeft => self.result_col_off = self.result_col_off.saturating_sub(1),
+            MoveLeft => {
+                self.result_cursor_col = self.result_cursor_col.saturating_sub(1);
+                self.scroll_cursor_col_into_view();
+            }
+            // PgDn/PgUp scroll the viewport by one body-height (independent
+            // of the cursor); clamped to the last page so the viewport never
+            // overshoots past the final row.
             PageDown => {
-                let last = match &self.output {
-                    Output::Table { rows, .. } => rows.len().saturating_sub(1),
-                    _ => return,
-                };
-                self.result_row_off = self.result_row_off.saturating_add(10).min(last);
+                let (nrows, vh) = self.result_dims();
+                let max_scroll = nrows.saturating_sub(vh);
+                self.result_scroll_row = self.result_scroll_row.saturating_add(vh).min(max_scroll);
             }
-            PageUp => self.result_row_off = self.result_row_off.saturating_sub(10),
-            Home => self.result_row_off = 0,
+            PageUp => {
+                let (_, vh) = self.result_dims();
+                self.result_scroll_row = self.result_scroll_row.saturating_sub(vh);
+            }
+            Home => {
+                self.result_cursor_row = 0;
+                self.result_scroll_row = 0;
+            }
             End => {
-                let last = match &self.output {
-                    Output::Table { rows, .. } => rows.len().saturating_sub(1),
-                    _ => return,
-                };
-                self.result_row_off = last;
+                let (nrows, vh) = self.result_dims();
+                self.result_cursor_row = nrows.saturating_sub(1);
+                self.result_scroll_row = nrows.saturating_sub(vh);
             }
 
             ConnectSelected => self.connect_selected(),
@@ -514,16 +568,48 @@ impl App {
         }
     }
 
+    /// `(nrows, viewport_height)` for the current result table, or `(0,1)`
+    /// when there's no table. `viewport_height` is the body-row count from the
+    /// last render (≥1 so page/auto-follow math never divides by zero).
+    fn result_dims(&self) -> (usize, usize) {
+        let nrows = match &self.output {
+            Output::Table { rows, .. } => rows.len(),
+            _ => return (0, 1),
+        };
+        (nrows, self.results_body_h.max(1))
+    }
+
+    /// Move the vertical viewport just enough to keep the cursor row visible,
+    /// leaving it in place otherwise (independent select + scroll).
+    fn scroll_cursor_row_into_view(&mut self) {
+        let vh = self.results_body_h.max(1);
+        if self.result_cursor_row < self.result_scroll_row {
+            self.result_scroll_row = self.result_cursor_row;
+        } else if self.result_cursor_row >= self.result_scroll_row + vh {
+            self.result_scroll_row = self.result_cursor_row.saturating_sub(vh - 1);
+        }
+    }
+
+    /// Horizontal counterpart of `scroll_cursor_row_into_view`.
+    fn scroll_cursor_col_into_view(&mut self) {
+        let vc = self.results_visible_cols.max(1);
+        if self.result_cursor_col < self.result_scroll_col {
+            self.result_scroll_col = self.result_cursor_col;
+        } else if self.result_cursor_col >= self.result_scroll_col + vc {
+            self.result_scroll_col = self.result_cursor_col.saturating_sub(vc - 1);
+        }
+    }
+
     fn copy_row_json(&mut self) {
         let json = match &self.output {
-            Output::Table { columns, rows, .. } => match rows.get(self.result_row_off) {
+            Output::Table { columns, rows, .. } => match rows.get(self.result_cursor_row) {
                 Some(row) => row_to_json(columns, row),
                 None => return,
             },
             _ => return,
         };
         self.status = match copy_to_clipboard(&json) {
-            Ok(()) => format!("Copied row {} as JSON.", self.result_row_off + 1),
+            Ok(()) => format!("Copied row {} as JSON.", self.result_cursor_row + 1),
             Err(e) => format!("Copy failed: {e}"),
         };
     }
@@ -605,8 +691,10 @@ impl App {
         let last = Features::LIST.len().saturating_sub(1);
         self.feature_cursor = if dir > 0 {
             if self.feature_cursor >= last { 0 } else { self.feature_cursor + 1 }
+        } else if self.feature_cursor == 0 {
+            last
         } else {
-            if self.feature_cursor == 0 { last } else { self.feature_cursor - 1 }
+            self.feature_cursor - 1
         };
     }
 
@@ -841,9 +929,10 @@ impl App {
         }
     }
 
-    /// Mouse wheel / trackpad scrolls the results pane — but only when the
-    /// cursor is over it (lazygit-style: scroll the pane you hover). The
-    /// results rect is recorded by `ui::draw` each frame.
+    /// Mouse on the results pane: wheel scrolls the viewport (cursor stays),
+    /// and a left-click moves the cell cursor to the clicked row/column
+    /// (auto-following the viewport) and focuses the pane. Geometry comes from
+    /// `results_click_geom`, recorded by `ui::draw` each frame.
     pub fn handle_mouse(&mut self, m: MouseEvent) {
         if self.form.is_some() || self.features_open {
             return;
@@ -852,26 +941,55 @@ impl App {
         if !(m.column >= rect.x && m.column < rect.right() && m.row >= rect.y && m.row < rect.bottom()) {
             return;
         }
-        let (last_row, last_col) = match &self.output {
-            Output::Table { columns, rows, .. } => {
-                (rows.len().saturating_sub(1), columns.len().saturating_sub(1))
-            }
+        // Wheel: scroll the viewport only — the cursor (highlight + copy
+        // target) stays put. That's the independent-select/scroll split.
+        let (nrows, ncol) = match &self.output {
+            Output::Table { columns, rows, .. } => (rows.len(), columns.len()),
             _ => return,
         };
+        let vh = self.results_body_h.max(1);
+        let vc = self.results_visible_cols.max(1);
+        let max_scroll_row = nrows.saturating_sub(vh);
+        let max_scroll_col = ncol.saturating_sub(vc);
+        let last_row = nrows.saturating_sub(1);
+        let last_col = ncol.saturating_sub(1);
         match m.kind {
             MouseEventKind::ScrollDown => {
-                self.result_row_off = self.result_row_off.saturating_add(1).min(last_row);
+                self.result_scroll_row = self.result_scroll_row.saturating_add(1).min(max_scroll_row);
             }
             MouseEventKind::ScrollUp => {
-                self.result_row_off = self.result_row_off.saturating_sub(1);
+                self.result_scroll_row = self.result_scroll_row.saturating_sub(1);
             }
             // Horizontal: ScrollRight moves the viewport right (toward later
             // columns), ScrollLeft toward earlier — same as the `l`/`h` keys.
             MouseEventKind::ScrollRight => {
-                self.result_col_off = self.result_col_off.saturating_add(1).min(last_col);
+                self.result_scroll_col = self.result_scroll_col.saturating_add(1).min(max_scroll_col);
             }
             MouseEventKind::ScrollLeft => {
-                self.result_col_off = self.result_col_off.saturating_sub(1);
+                self.result_scroll_col = self.result_scroll_col.saturating_sub(1);
+            }
+            // Left-click → select the cell under the cursor (body click sets
+            // row + col; header click sets only the column; clicks in the
+            // row-num gutter or column gaps leave that axis unchanged).
+            MouseEventKind::Down(MouseButton::Left) => {
+                let (row, col) = match &self.results_click_geom {
+                    Some(geom) => click_to_cell(geom, self.result_scroll_row, m.column, m.row),
+                    None => (None, None),
+                };
+                let mut moved = false;
+                if let Some(r) = row {
+                    self.result_cursor_row = r.min(last_row);
+                    self.scroll_cursor_row_into_view();
+                    moved = true;
+                }
+                if let Some(c) = col {
+                    self.result_cursor_col = c.min(last_col);
+                    self.scroll_cursor_col_into_view();
+                    moved = true;
+                }
+                if moved {
+                    self.focus = Focus::Results;
+                }
             }
             _ => {}
         }
@@ -1241,5 +1359,171 @@ mod tests {
         let rows = vec![vec!["1".to_string(), "x,y".to_string()], vec!["2".to_string(), "he said \"hi\"".to_string()]];
         let csv = super::result_to_csv(&cols, &rows);
         assert_eq!(csv, "a,b\n1,\"x,y\"\n2,\"he said \"\"hi\"\"\"\n");
+    }
+
+    // --- Results: independent cursor (select) vs viewport (scroll) ---
+    use super::{App, Focus, Output};
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+    /// App focused on Results with a `nrows × ncols` table and a viewport
+    /// of `body_h` data rows / `vis_cols` data cols (as the renderer would
+    /// report). `?`-log + modals are off so keys route to Results nav.
+    fn results_app(nrows: usize, ncols: usize, body_h: usize, vis_cols: usize) -> App {
+        let mut app = App::load().unwrap();
+        app.focus = Focus::Results;
+        app.output = Output::Table {
+            columns: (0..ncols).map(|c| format!("c{c}")).collect(),
+            rows: (0..nrows).map(|r| (0..ncols).map(|c| format!("{r}.{c}")).collect()).collect(),
+            rows_affected: nrows as u64,
+            elapsed_ms: 0,
+        };
+        app.results_body_h = body_h;
+        app.results_visible_cols = vis_cols;
+        app
+    }
+
+    fn press(app: &mut App, code: KeyCode) {
+        app.handle_key(KeyEvent::new_with_kind_and_state(
+            code, KeyModifiers::NONE, KeyEventKind::Press, KeyEventState::NONE,
+        ));
+    }
+
+    #[test]
+    fn results_cursor_auto_follows_viewport() {
+        let mut app = results_app(30, 5, 5, 5);
+        // j from row 0: cursor advances, viewport holds until cursor would
+        // leave the bottom, then scroll keeps it on the last visible line.
+        for _ in 0..5 { press(&mut app, KeyCode::Char('j')); }
+        assert_eq!(app.result_cursor_row, 5);
+        assert_eq!(app.result_scroll_row, 1, "viewport scrolls to keep cursor at bottom");
+        // k back up: viewport follows upward only when cursor crosses the top.
+        press(&mut app, KeyCode::Char('k'));
+        assert_eq!(app.result_cursor_row, 4);
+        assert_eq!(app.result_scroll_row, 1, "no scroll up while cursor still visible");
+        for _ in 0..5 { press(&mut app, KeyCode::Char('k')); }
+        assert_eq!(app.result_cursor_row, 0);
+        assert_eq!(app.result_scroll_row, 0, "viewport follows when cursor hits top");
+    }
+
+    #[test]
+    fn results_page_scroll_is_independent_of_cursor() {
+        let mut app = results_app(30, 5, 5, 5);
+        // move the cursor down a bit so it's not at the viewport top
+        for _ in 0..3 { press(&mut app, KeyCode::Char('j')); }
+        assert_eq!(app.result_cursor_row, 3);
+        let cursor_before = app.result_cursor_row;
+        // PgDn scrolls the viewport by a page; the cursor stays put.
+        press(&mut app, KeyCode::PageDown);
+        assert_eq!(app.result_cursor_row, cursor_before, "cursor must not move on PgDn");
+        assert_eq!(app.result_scroll_row, 5, "viewport scrolled one page");
+        // cursor is now above the viewport — independent scroll achieved.
+        assert!(app.result_cursor_row < app.result_scroll_row);
+        // PgDn clamps at the last page (max scroll = 30-5 = 25).
+        for _ in 0..10 { press(&mut app, KeyCode::PageDown); }
+        assert_eq!(app.result_scroll_row, 25);
+    }
+
+    #[test]
+    fn results_home_end_jump_cursor_and_follow() {
+        let mut app = results_app(30, 5, 5, 5);
+        press(&mut app, KeyCode::End);
+        assert_eq!(app.result_cursor_row, 29);
+        assert_eq!(app.result_scroll_row, 25, "End scrolls so the last row is at the viewport bottom");
+        press(&mut app, KeyCode::Home);
+        assert_eq!(app.result_cursor_row, 0);
+        assert_eq!(app.result_scroll_row, 0);
+    }
+
+    #[test]
+    fn results_mouse_wheel_scrolls_viewport_only() {
+        let mut app = results_app(30, 5, 5, 5);
+        app.results_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 10));
+        // park the cursor on row 2
+        for _ in 0..2 { press(&mut app, KeyCode::Char('j')); }
+        let cursor_before = app.result_cursor_row;
+        // wheel down over the results pane
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 5, row: 5, modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.result_cursor_row, cursor_before, "wheel never moves the cursor");
+        assert_eq!(app.result_scroll_row, 1, "wheel scrolls the viewport");
+    }
+
+    #[test]
+    fn results_copy_uses_cursor_not_scroll() {
+        let mut app = results_app(30, 2, 5, 2);
+        // scroll the viewport away from the cursor (cursor stays at 0)
+        press(&mut app, KeyCode::PageDown);
+        assert_eq!(app.result_cursor_row, 0);
+        assert!(app.result_scroll_row > 0);
+        // y copies the *cursor* row (0 → "0.0","0.1"), not the viewport top.
+        press(&mut app, KeyCode::Char('y'));
+        assert!(app.status.starts_with("Copied row 1 as JSON"), "got: {}", app.status);
+    }
+
+    #[test]
+    fn click_to_cell_maps_body_and_header() {
+        use super::{click_to_cell, ResultsClickGeom};
+        use ratatui::layout::Rect;
+        // body starts at y=2 (header at y=1); row-num col width 2; three data
+        // cols at x=3, 8, 13 (width 4 each, 1-col spacing).
+        let geom = ResultsClickGeom {
+            body: Rect::new(0, 2, 20, 5),
+            cols: vec![(0, 3, 4), (1, 8, 4), (2, 13, 4)],
+        };
+        // body click → row = scroll_row + rel, col by x-range.
+        assert_eq!(click_to_cell(&geom, 5, 4, 3), (Some(6), Some(0)));
+        assert_eq!(click_to_cell(&geom, 5, 9, 4), (Some(7), Some(1)));
+        assert_eq!(click_to_cell(&geom, 5, 15, 6), (Some(9), Some(2)));
+        // header click (y=1) → row None, col Some.
+        assert_eq!(click_to_cell(&geom, 5, 9, 1), (None, Some(1)));
+        // row-num gutter (x=0) → row Some, col None (column left as-is).
+        assert_eq!(click_to_cell(&geom, 5, 0, 3), (Some(6), None));
+        // inter-column gap (x=7, between col 0 [3..7) and col 1 [8..12)).
+        assert_eq!(click_to_cell(&geom, 5, 7, 3), (Some(6), None));
+        // below the body → nothing.
+        assert_eq!(click_to_cell(&geom, 5, 4, 10), (None, Some(0)));
+    }
+
+    fn click_geom() -> super::ResultsClickGeom {
+        use ratatui::layout::Rect;
+        super::ResultsClickGeom {
+            body: Rect::new(0, 2, 20, 5),
+            cols: vec![(0, 3, 4), (1, 8, 4), (2, 13, 4)],
+        }
+    }
+
+    #[test]
+    fn results_click_selects_cell_and_focuses() {
+        let mut app = results_app(30, 5, 5, 5);
+        app.results_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 10));
+        app.results_click_geom = Some(click_geom());
+        app.result_scroll_row = 5; // viewport starts at row 5
+        app.focus = Focus::Editor; // not focused yet
+        // click body at (x=9, y=4) → rel row 2 → abs row 7, col 1.
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 9, row: 4, modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.result_cursor_row, 7);
+        assert_eq!(app.result_cursor_col, 1);
+        assert!(app.focus == Focus::Results, "click focuses the results pane");
+    }
+
+    #[test]
+    fn results_click_header_selects_column_only() {
+        let mut app = results_app(30, 5, 5, 5);
+        app.results_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 10));
+        app.results_click_geom = Some(click_geom());
+        // park the cursor on row 12 so we can see it's untouched by a header click
+        app.result_cursor_row = 12;
+        // click header (y=1) at col 2 (x=15).
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 15, row: 1, modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.result_cursor_col, 2);
+        assert_eq!(app.result_cursor_row, 12, "header click must not move the row cursor");
     }
 }

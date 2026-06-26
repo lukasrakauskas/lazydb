@@ -3,12 +3,14 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
+        Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState,
+        Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState,
+        Wrap,
     },
     Frame,
 };
 
-use crate::app::{App, Focus, FormState, Output, SchemaEntry, SchemaOpt};
+use crate::app::{App, Focus, FormState, Output, ResultsClickGeom, SchemaEntry, SchemaOpt};
 use crate::config::Features;
 use crate::highlight;
 use crate::shortcuts;
@@ -235,10 +237,12 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
     let title = match &app.output {
         Output::Table { columns, rows, rows_affected, .. } if !columns.is_empty() => {
             format!(
-                "Results  ·  {} rows  ·  {} affected  ·  col {}/{}",
+                "Results  ·  {} rows  ·  {} affected  ·  row {}/{}  col {}/{}",
                 rows.len(),
                 rows_affected,
-                app.result_col_off + 1,
+                app.result_cursor_row + 1,
+                rows.len(),
+                app.result_cursor_col + 1,
                 columns.len(),
             )
         }
@@ -265,7 +269,16 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
                 );
                 return;
             }
-            draw_table(f, columns, rows, inner, app.result_row_off, app.result_col_off);
+            let (cr, sr, cc, sc) = (
+                app.result_cursor_row,
+                app.result_scroll_row,
+                app.result_cursor_col,
+                app.result_scroll_col,
+            );
+            let (body_h, vis_cols, geom) = draw_table(f, columns, rows, inner, (cr, sr, cc, sc));
+            app.results_click_geom = Some(geom);
+            app.results_body_h = body_h;
+            app.results_visible_cols = vis_cols;
         }
     }
 }
@@ -274,112 +287,209 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
 /// ponytail: widths measured by char count, not display width, so CJK/emoji will
 /// misalign and may overflow a cell. Fine for typical ASCII SQL result sets;
 /// swap in unicode-width if you store wide chars in DB columns.
+/// Greedily pick visible column indices starting at `col_off` to fit `budget`
+// width, given per-column `widths`, a leading `gutter` (row-num col + 1 gap)
+// and a 1-col gap between data columns. `TableState` has no horizontal offset
+// in 0.28, so `draw_table` windows columns manually and feeds only `vis` to
+// the `Table`.
+fn visible_columns(widths: &[usize], col_off: usize, budget: usize, gutter: usize) -> Vec<usize> {
+    let ncol = widths.len();
+    let mut vis: Vec<usize> = Vec::new();
+    let mut used = gutter;
+    for (c, &w) in widths.iter().enumerate().skip(col_off) {
+        if !vis.is_empty() { used += 1; }
+        if used + w > budget { break; }
+        used += w;
+        vis.push(c);
+    }
+    if vis.is_empty() {
+        vis.push(col_off.min(ncol.saturating_sub(1)));
+    }
+    vis
+}
+
+/// ratatui `Table` with row + column + cell highlight and vertical &
+// horizontal scrollbars. Cursor (the highlighted + copy-target cell) and
+// viewport scroll are independent: we slice visible rows from `scroll_row`
+// and visible columns from `scroll_col` ourselves, then set `TableState`'s
+// `selected`/`selected_column` to viewport-relative indices (or `None` when
+// the cursor is outside the viewport) so ratatui's own auto-follow never
+// fights our scroll. Returns `(body_h, visible_cols)` so the caller can feed
+// them back to the nav handlers for auto-follow + page sizing.
+// ponytail: widths measured by char count, not display width, so CJK/emoji
+// will misalign. Fine for ASCII SQL results; swap in unicode-width if needed.
 fn draw_table(
     f: &mut Frame,
     columns: &[String],
     rows: &[Vec<String>],
     inner: Rect,
-    row_off: usize,
-    col_off: usize,
-) {
+    // (cursor_row, scroll_row, cursor_col, scroll_col)
+    (cursor_row, scroll_row, cursor_col, scroll_col): (usize, usize, usize, usize),
+) -> (usize, usize, ResultsClickGeom) {
     let ncol = columns.len();
-    let widths: Vec<usize> = (0..ncol)
-        .map(|c| {
-            let mut w = columns[c].chars().count();
-            for r in 0..rows.len() {
-                if let Some(cell) = rows[r].get(c) {
-                    w = w.max(cell.chars().count());
-                }
-            }
-            w
+    // Content-width per column (char count).
+    let widths: Vec<usize> = columns
+        .iter()
+        .enumerate()
+        .map(|(c, col)| {
+            let cell_max = rows
+                .iter()
+                .filter_map(|r| r.get(c))
+                .map(|s| s.chars().count())
+                .max()
+                .unwrap_or(0);
+            col.chars().count().max(cell_max)
         })
         .collect();
 
-    let rownum_w = rows.len().to_string().len().max(1);
-    let gutter = rownum_w + 1;
-    let avail = inner.width as usize;
-    let body_w = avail.saturating_sub(gutter);
-    const SEP: usize = 2; // spaces between columns
-
-    // Greedily pick visible columns starting at col_off.
-    let mut vis: Vec<usize> = Vec::new();
-    let mut used = 0usize;
-    for c in col_off..ncol {
-        if !vis.is_empty() && used + widths[c] + SEP > body_w {
-            break;
-        }
-        used += widths[c] + SEP;
-        vis.push(c);
-        if used >= body_w {
-            break;
-        }
-    }
-    if vis.is_empty() {
-        vis.push(col_off.min(ncol - 1));
-    }
-
-    let header_body: String =
-        vis.iter().map(|&c| format!("{}  ", pad(&columns[c], widths[c]))).collect();
-    let header_line = Line::from(trunc(&format!("{}{}", " ".repeat(gutter), header_body), avail))
-        .style(Style::default().add_modifier(Modifier::BOLD));
-    let separator = Line::from("─".repeat(avail)).style(Style::default().fg(Color::DarkGray));
-
-    let mut lines: Vec<Line> = vec![header_line, separator];
-    let body_rows = inner.height as usize;
-    let last = (row_off + body_rows.saturating_sub(2)).min(rows.len());
-    for i in row_off..last {
-        let gutter_str = format!("{:>width$} ", i + 1, width = rownum_w);
-        let body: String = vis
-            .iter()
-            .map(|&c| {
-                let cell = rows[i].get(c).map(|s| s.as_str()).unwrap_or("");
-                format!("{}  ", pad(cell, widths[c]))
-            })
-            .collect();
-        lines.push(Line::from(trunc(&format!("{gutter_str}{body}"), avail)));
-    }
-    if rows.is_empty() {
-        lines.push(Line::from("(no rows)").style(Style::default().fg(Color::DarkGray)));
-    }
-
-    f.render_widget(Paragraph::new(lines), inner);
-}
-
-fn pad(s: &str, w: usize) -> String {
-    let n = s.chars().count();
-    if n >= w {
-        s.chars().take(w).collect()
+    // Reserve a 1-col right gutter for the vertical scrollbar and a 1-row
+    // bottom gutter for the horizontal one — but only when there's enough
+    // content to scroll, so tiny result sets aren't cropped.
+    let [table_area, vbar_gutter] = if rows.len() > 1 {
+        Layout::horizontal([Constraint::Min(1), Constraint::Length(1)]).areas(inner)
     } else {
-        let mut out = s.to_string();
-        out.push_str(&" ".repeat(w - n));
-        out
+        [inner, Rect::ZERO]
+    };
+    let [table_area, hbar_gutter] = if ncol > 1 {
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(table_area)
+    } else {
+        [table_area, Rect::ZERO]
+    };
+
+    let rownum_w = rows.len().to_string().len().max(1);
+    let budget = table_area.width as usize;
+    let vis = visible_columns(&widths, scroll_col, budget, rownum_w + 1);
+    let visible_cols = vis.len();
+    // Body height in data rows (excl. header). Clamped ≥1 so callers' math
+    // never divides by zero before the first real render.
+    let body_h = (table_area.height as usize).saturating_sub(1).max(1);
+
+    // First column = row number; then the visible data columns.
+    let mut header_cells: Vec<String> = Vec::with_capacity(vis.len() + 1);
+    header_cells.push("#".to_string());
+    for &c in &vis { header_cells.push(columns[c].clone()); }
+    let header = Row::new(header_cells).style(Style::default().add_modifier(Modifier::BOLD));
+
+    // Slice the visible rows ourselves (ratatui's TableState.offset would
+    // force the selected row into view — we don't want that when the cursor
+    // is off-screen). Row numbers stay absolute so the user sees real indices.
+    let first = scroll_row.min(rows.len().saturating_sub(1));
+    let last_vis = (scroll_row + body_h).min(rows.len());
+    let data_rows = rows[first..last_vis].iter().enumerate().map(|(rel, r)| {
+        let mut cells: Vec<String> = Vec::with_capacity(vis.len() + 1);
+        cells.push(format!("{:>width$}", first + rel + 1, width = rownum_w));
+        for &c in &vis {
+            cells.push(r.get(c).cloned().unwrap_or_default());
+        }
+        Row::new(cells)
+    });
+
+    let mut col_widths: Vec<Constraint> = Vec::with_capacity(vis.len() + 1);
+    col_widths.push(Constraint::Length(rownum_w as u16));
+    for &c in &vis {
+        col_widths.push(Constraint::Length(widths[c] as u16));
     }
-}
 
-fn trunc(s: &str, w: usize) -> String {
-    s.chars().take(w).collect()
-}
+    let table = Table::new(data_rows, col_widths)
+        .header(header)
+        // row + column + cell highlight: the cursor row and column are Gray
+        // guides (Black-on-Gray, readable on dark + light terminals — same combo
+        // the Connections list uses for its highlight), and the cell at the
+        // intersection is the cyan accent, matching the app's Cyan+Black
+        // "selected" style used everywhere else.
+        .row_highlight_style(Style::default().bg(Color::Gray).fg(Color::Black))
+        .column_highlight_style(Style::default().bg(Color::Gray).fg(Color::Black))
+        .cell_highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black))
+        // no symbol gutter — the row-num column is our gutter
+        .highlight_spacing(HighlightSpacing::Never);
 
+    // Viewport-relative selection: highlight the cursor only when it's
+    // actually on screen. `selected` is relative to our sliced rows; the
+    // Table column index for an absolute col is 1 (row-num col) + its
+    // position in `vis`.
+    let mut state = TableState::new();
+    if last_vis > first && cursor_row >= first && cursor_row < last_vis {
+        state.select(Some(cursor_row - first));
+    }
+    if let Some(pos) = vis.iter().position(|&c| c == cursor_col) {
+        state.selected_column_mut().replace(1 + pos);
+    }
+    f.render_stateful_widget(table, table_area, &mut state);
+
+    // Empty result: overlay "(no rows)" on the body (header still shows).
+    if rows.is_empty() {
+        let body = Rect {
+            y: table_area.y + 1,
+            height: table_area.height.saturating_sub(1),
+            ..table_area
+        };
+        f.render_widget(
+            Paragraph::new("(no rows)").style(Style::default().fg(Color::DarkGray)),
+            body,
+        );
+    }
+
+    // Scrollbars reflect the manual offsets.
+    if vbar_gutter != Rect::ZERO {
+        let body_h = (table_area.height as usize).saturating_sub(1); // minus header
+        let mut vstate = ScrollbarState::new(rows.len())
+            .position(scroll_row.min(rows.len().saturating_sub(1)))
+            .viewport_content_length(body_h);
+        f.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight),
+            vbar_gutter,
+            &mut vstate,
+        );
+    }
+    if hbar_gutter != Rect::ZERO {
+        let mut hstate = ScrollbarState::new(ncol)
+            .position(scroll_col.min(ncol.saturating_sub(1)))
+            .viewport_content_length(visible_cols.max(1));
+        f.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::HorizontalBottom),
+            hbar_gutter,
+            &mut hstate,
+        );
+    }
+    // Geometry for click-to-select: the body rect (excl. header) and the
+    // x-range of each visible data column. ratatui lays columns out left-to-
+    // right with 1-col spacing, the row-num column first — so the first data
+    // column starts at table_area.x + rownum_w + 1.
+    let body = Rect {
+        x: table_area.x,
+        y: table_area.y + 1,
+        width: table_area.width,
+        height: table_area.height.saturating_sub(1),
+    };
+    let mut cols: Vec<(usize, u16, u16)> = Vec::with_capacity(vis.len());
+    let mut x = table_area.x.saturating_add(rownum_w as u16 + 1);
+    for &c in &vis {
+        let w = widths[c] as u16;
+        cols.push((c, x, w));
+        x = x.saturating_add(w + 1);
+    }
+    let geom = ResultsClickGeom { body, cols };
+
+    (body_h, visible_cols, geom)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn pad_trunc_basic() {
-        assert_eq!(pad("ab", 5), "ab   ");
-        assert_eq!(pad("abcdef", 3), "abc");
-        assert_eq!(trunc("abcdef", 3), "abc");
-        assert_eq!(trunc("ab", 5), "ab");
-    }
-
-    #[test]
-    fn row_window_clamps_to_bounds() {
-        // mirrors draw_table's windowing math (header+separator = 2 lines)
-        let rows: usize = 3;
-        let body_rows: usize = 10;
-        let row_off: usize = 1;
-        let last = (row_off + body_rows.saturating_sub(2)).min(rows);
-        assert_eq!((row_off..last).collect::<Vec<_>>(), vec![1, 2]);
+    fn visible_columns_windows_from_offset() {
+        // widths: 3 cols of width 5. budget fits 2 data cols after a 2-wide gutter.
+        // gutter=2; each data col costs width+1 gap (except the first).
+        // budget 12 → 2+5=7 fits col 0, +1+5=13 > 12 → stop → [0].
+        // budget 15 → 7, 13, +1+5=19 > 15 → stop after col 1 → [0,1].
+        let widths = [5usize, 5, 5];
+        assert_eq!(visible_columns(&widths, 0, 12, 2), vec![0]);
+        assert_eq!(visible_columns(&widths, 0, 15, 2), vec![0, 1]);
+        // offset 1 starts the window at col 1; budget 20 fits both remaining.
+        assert_eq!(visible_columns(&widths, 1, 20, 2), vec![1, 2]);
+        // nothing fits → still returns the offset col (clamped) so one col shows.
+        assert_eq!(visible_columns(&widths, 0, 1, 2), vec![0]);
+        assert_eq!(visible_columns(&widths, 5, 1, 2), vec![2]); // col_off clamped to last
     }
 }
 

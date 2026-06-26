@@ -29,10 +29,10 @@ cargo run -- query.sql
 |-----|--------|
 | `Tab` | cycle focus: Connections → Editor → Results → Schema |
 | `1` / `2` / `3` / `4` | jump focus to Connections / Editor / Results / Schema (not while editing) |
-| `j`/`k`, arrows | move selection (Connections) / scroll rows (Results) |
-| `h`/`l`, ←/→ | scroll columns horizontally (Results) |
-| `PgUp`/`PgDn`, `Home`/`End` | scroll rows by page / jump (Results) |
-| mouse wheel / trackpad | scroll results vertically & horizontally (hover the Results pane) |
+| `j`/`k`, ↑/↓ | move selection (Connections) / move the cell cursor row (Results); viewport auto-follows |
+| `h`/`l`, ←/→ | move the cell cursor column (Results); viewport auto-follows |
+| `PgUp`/`PgDn` | scroll the viewport a page (Results; cursor stays) · `Home`/`End` jump the cursor to first/last row |
+| mouse wheel / trackpad | scroll the viewport (hover the Results pane); the cell cursor stays put |
 | `Enter` (Connections) | connect to selected |
 | `n` | new connection form (`Enter` save, `Esc` cancel, `Tab` next field) |
 | `f` | features modal (`Space` toggle, `j/k` move, `Esc`/`f`/`q` close) — not while editing |
@@ -40,7 +40,7 @@ cargo run -- query.sql
 | `Enter` / `l` (Schema) | expand table → `rows` / `columns` / `constraints` / `indexes`; selecting one prefills + runs the query · `h` collapse |
 | `Ctrl+R` / `F5` / `Option+Enter` | run SQL in the editor |
 | `Shift+Up` / `Shift+Down` | recall older / newer query (in the editor) |
-| `y` (Results) | copy the selected row as JSON to the clipboard |
+| `y` (Results) | copy the cursor row as JSON to the clipboard (the highlighted cell's row) |
 | `Ctrl+S` (Results) | export the whole result set as CSV to the clipboard |
 | `Ctrl+Q` / `Ctrl+C` / `q`* | quit (*`q` types while in the editor) |
 
