@@ -3,6 +3,7 @@ mod autocomplete;
 mod config;
 mod db;
 mod editor;
+mod filter;
 mod highlight;
 mod ui;
 mod shortcuts;

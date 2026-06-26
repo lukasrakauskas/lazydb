@@ -236,14 +236,21 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
     app.results_rect = Some(area);
     let title = match &app.output {
         Output::Table { columns, rows, rows_affected, .. } if !columns.is_empty() => {
+            // Title shows displayed count when filtered, plus the filter query.
+            let (nrows, suffix) = match &app.result_filter {
+                Some(f) => (f.matched.len(), format!("  ·  filter: '{}'", f.query)),
+                None => (rows.len(), String::new()),
+            };
+            let cur_row = app.result_cursor_row.map(|i| i + 1).unwrap_or(0);
             format!(
-                "Results  ·  {} rows  ·  {} affected  ·  row {}/{}  col {}/{}",
-                rows.len(),
+                "Results  ·  {} rows  ·  {} affected  ·  row {}/{}  col {}/{}{}",
+                nrows,
                 rows_affected,
-                app.result_cursor_row + 1,
-                rows.len(),
+                cur_row,
+                nrows,
                 app.result_cursor_col + 1,
                 columns.len(),
+                suffix,
             )
         }
         _ => "Results".to_string(),
@@ -269,13 +276,37 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
                 );
                 return;
             }
+            // When a filter is active, render a 1-row input above the table.
+            // ponytail: reserves 1 line only while filtering so unfiltered
+            // result sets keep full height.
+            let table_area = match &app.result_filter {
+                Some(rf) => {
+                    let [bar, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+                    draw_filter_bar(f, &rf.query, bar);
+                    rest
+                }
+                None => inner,
+            };
+            // Displayed rows + their absolute indices (filtered subset, or the
+            // full set with 0..n). The abs indices drive the row-number column
+            // and the matched-char highlight lookup.
+            let (disp, disp_abs): (Vec<Vec<String>>, Vec<usize>) = match &app.result_filter {
+                Some(f) => (
+                    f.matched.iter().filter_map(|&i| rows.get(i).cloned()).collect(),
+                    f.matched.clone(),
+                ),
+                None => (rows.clone(), (0..rows.len()).collect()),
+            };
+            let offsets = app.result_filter.as_ref().map(|f| &f.offsets);
             let (cr, sr, cc, sc) = (
                 app.result_cursor_row,
                 app.result_scroll_row,
                 app.result_cursor_col,
                 app.result_scroll_col,
             );
-            let (body_h, vis_cols, geom) = draw_table(f, columns, rows, inner, (cr, sr, cc, sc));
+            let (body_h, vis_cols, geom) = draw_table(
+                f, columns, &disp, table_area, (cr, sr, cc, sc), &disp_abs, offsets,
+            );
             app.results_click_geom = Some(geom);
             app.results_body_h = body_h;
             app.results_visible_cols = vis_cols;
@@ -324,7 +355,16 @@ fn draw_table(
     rows: &[Vec<String>],
     inner: Rect,
     // (cursor_row, scroll_row, cursor_col, scroll_col)
-    (cursor_row, scroll_row, cursor_col, scroll_col): (usize, usize, usize, usize),
+    // cursor_row is Option (None = deselected). Indices are into `rows`, the
+    // displayed set (filtered subset or full).
+    (cursor_row, scroll_row, cursor_col, scroll_col): (Option<usize>, usize, usize, usize),
+    // Absolute row index for each displayed row (same length as `rows`). Used
+    // for the row-number column and to look up match offsets.
+    disp_abs: &[usize],
+    // When a filter is active, maps abs row → matched byte offsets in the
+    // row's tab-joined text, for the FZF-style char highlight. None = no
+    // filter, render cells plain.
+    offsets: Option<&std::collections::HashMap<usize, Vec<usize>>>,
 ) -> (usize, usize, ResultsClickGeom) {
     let ncol = columns.len();
     // Content-width per column (char count).
@@ -372,14 +412,24 @@ fn draw_table(
 
     // Slice the visible rows ourselves (ratatui's TableState.offset would
     // force the selected row into view — we don't want that when the cursor
-    // is off-screen). Row numbers stay absolute so the user sees real indices.
+    // is off-screen). Row numbers are the absolute row index (via `disp_abs`)
+    // so the user sees real indices even in a filtered view.
     let first = scroll_row.min(rows.len().saturating_sub(1));
     let last_vis = (scroll_row + body_h).min(rows.len());
     let data_rows = rows[first..last_vis].iter().enumerate().map(|(rel, r)| {
-        let mut cells: Vec<String> = Vec::with_capacity(vis.len() + 1);
-        cells.push(format!("{:>width$}", first + rel + 1, width = rownum_w));
+        let abs = disp_abs.get(first + rel).copied().unwrap_or(first + rel);
+        // Split the row's joined-text match offsets into per-cell byte offsets,
+        // so each visible cell can highlight the chars the query matched.
+        let per_cell = match offsets.and_then(|m| m.get(&abs)) {
+            Some(hits) => crate::filter::split_cell_offsets(hits, r),
+            None => Vec::new(),
+        };
+        let mut cells: Vec<Line> = Vec::with_capacity(vis.len() + 1);
+        cells.push(Line::from(format!("{:>width$}", abs + 1, width = rownum_w)));
         for &c in &vis {
-            cells.push(r.get(c).cloned().unwrap_or_default());
+            let cell_str = r.get(c).cloned().unwrap_or_default();
+            let hits = per_cell.get(c).cloned().unwrap_or_default();
+            cells.push(highlighted_line(&cell_str, &hits));
         }
         Row::new(cells)
     });
@@ -392,14 +442,14 @@ fn draw_table(
 
     let table = Table::new(data_rows, col_widths)
         .header(header)
-        // row + column + cell highlight: the cursor row and column are Gray
-        // guides (Black-on-Gray, readable on dark + light terminals — same combo
-        // the Connections list uses for its highlight), and the cell at the
-        // intersection is the cyan accent, matching the app's Cyan+Black
-        // "selected" style used everywhere else.
-        .row_highlight_style(Style::default().bg(Color::Gray).fg(Color::Black))
-        .column_highlight_style(Style::default().bg(Color::Gray).fg(Color::Black))
-        .cell_highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black))
+        // row + column + cell highlight: only the bg is set so cell spans keep
+        // their own fg — that lets the FZF-style matched-char (Yellow+bold)
+        // glow show through even on the selected row/column/cell. The Gray
+        // guides + Cyan cell bg alone mark selection clearly; forcing fg
+        // would clobber the matched-char color.
+        .row_highlight_style(Style::default().bg(Color::Gray))
+        .column_highlight_style(Style::default().bg(Color::Gray))
+        .cell_highlight_style(Style::default().bg(Color::Cyan))
         // no symbol gutter — the row-num column is our gutter
         .highlight_spacing(HighlightSpacing::Never);
 
@@ -408,8 +458,12 @@ fn draw_table(
     // Table column index for an absolute col is 1 (row-num col) + its
     // position in `vis`.
     let mut state = TableState::new();
-    if last_vis > first && cursor_row >= first && cursor_row < last_vis {
-        state.select(Some(cursor_row - first));
+    if let Some(cr) = cursor_row
+        && last_vis > first
+        && cr >= first
+        && cr < last_vis
+    {
+        state.select(Some(cr - first));
     }
     if let Some(pos) = vis.iter().position(|&c| c == cursor_col) {
         state.selected_column_mut().replace(1 + pos);
@@ -472,27 +526,56 @@ fn draw_table(
 
     (body_h, visible_cols, geom)
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn visible_columns_windows_from_offset() {
-        // widths: 3 cols of width 5. budget fits 2 data cols after a 2-wide gutter.
-        // gutter=2; each data col costs width+1 gap (except the first).
-        // budget 12 → 2+5=7 fits col 0, +1+5=13 > 12 → stop → [0].
-        // budget 15 → 7, 13, +1+5=19 > 15 → stop after col 1 → [0,1].
-        let widths = [5usize, 5, 5];
-        assert_eq!(visible_columns(&widths, 0, 12, 2), vec![0]);
-        assert_eq!(visible_columns(&widths, 0, 15, 2), vec![0, 1]);
-        // offset 1 starts the window at col 1; budget 20 fits both remaining.
-        assert_eq!(visible_columns(&widths, 1, 20, 2), vec![1, 2]);
-        // nothing fits → still returns the offset col (clamped) so one col shows.
-        assert_eq!(visible_columns(&widths, 0, 1, 2), vec![0]);
-        assert_eq!(visible_columns(&widths, 5, 1, 2), vec![2]); // col_off clamped to last
-    }
+/// One-line filter input rendered above the results table while the filter
+// mode is active. Shows a `filter:` prompt, the live query, and a block cursor.
+// ponytail: no background — a bg(Black) blends into dark terminals and hides
+// the text; a distinct bg would clash with the table's row/col Gray guides.
+// Cyan-bold prompt + Gray-bold query (dark, readable — White was too bright).
+fn draw_filter_bar(f: &mut Frame, query: &str, area: Rect) {
+    let line = Line::from(vec![
+        Span::styled("filter: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(query.to_owned(), Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD)),
+        Span::styled("▏", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+    ]);
+    f.render_widget(Paragraph::new(line), area);
 }
 
+/// A cell's text as a `Line`, with the chars at `hits` (byte offsets within
+// `s`) rendered in Yellow+bold — the FZF-style glow showing which chars the
+// filter query matched. `hits` empty → a plain line. ponytail: walks
+// `char_indices` so multi-byte cells highlight by byte offset (the matcher
+// works on bytes); merges consecutive same-style runs into one span.
+fn highlighted_line(s: &str, hits: &[usize]) -> Line<'static> {
+    if hits.is_empty() {
+        return Line::from(s.to_owned());
+    }
+    let hit: std::collections::HashSet<usize> = hits.iter().copied().collect();
+    let mut spans: Vec<Span> = Vec::new();
+    let mut buf = String::new();
+    let mut buf_hit = false;
+    for (b, ch) in s.char_indices() {
+        let is_hit = hit.contains(&b);
+        if is_hit != buf_hit && !buf.is_empty() {
+            let text = std::mem::take(&mut buf);
+            spans.push(if buf_hit {
+                Span::styled(text, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            } else {
+                Span::raw(text)
+            });
+        }
+        buf.push(ch);
+        buf_hit = is_hit;
+    }
+    if !buf.is_empty() {
+        spans.push(if buf_hit {
+            Span::styled(buf, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        } else {
+            Span::raw(buf)
+        });
+    }
+    Line::from(spans)
+}
 fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
     // The bottom keybar shows only the shortcuts active in the current view
     // (view-specific + common pane chrome + global), so the hint always
@@ -504,6 +587,7 @@ fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
         app.features_open,
         app.confirm_destructive.is_some(),
         app.autocomplete.is_some(),
+        app.result_filter.is_some(),
     );
     let mut spans: Vec<Span> = vec![Span::raw(" ")];
     for (i, b) in shortcuts::bar_bindings(view).enumerate() {
@@ -654,4 +738,48 @@ fn draw_confirm_destructive(f: &mut Frame, app: &App, area: Rect) {
         Line::from(" Press  y  to confirm  ·  n / Esc  to cancel"),
     ];
     f.render_widget(Paragraph::new(msg).wrap(Wrap { trim: false }), inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visible_columns_windows_from_offset() {
+        // widths: 3 cols of width 5. budget fits 2 data cols after a 2-wide gutter.
+        // gutter=2; each data col costs width+1 gap (except the first).
+        // budget 12 → 2+5=7 fits col 0, +1+5=13 > 12 → stop → [0].
+        // budget 15 → 7, 13, +1+5=19 > 15 → stop after col 1 → [0,1].
+        let widths = [5usize, 5, 5];
+        assert_eq!(visible_columns(&widths, 0, 12, 2), vec![0]);
+        assert_eq!(visible_columns(&widths, 0, 15, 2), vec![0, 1]);
+        // offset 1 starts the window at col 1; budget 20 fits both remaining.
+        assert_eq!(visible_columns(&widths, 1, 20, 2), vec![1, 2]);
+        // nothing fits → still returns the offset col (clamped) so one col shows.
+        assert_eq!(visible_columns(&widths, 0, 1, 2), vec![0]);
+        assert_eq!(visible_columns(&widths, 5, 1, 2), vec![2]); // col_off clamped to last
+    }
+
+    #[test]
+    fn highlighted_line_marks_matched_chars() {
+        // "jane" with hits at byte offsets 0 and 2 (j, n) → 'j','n' bold
+        // yellow, 'a','e' plain. Runs merge same-style chars, so 4 spans:
+        // hit(j) | plain(a) | hit(n) | plain(e).
+        let line = highlighted_line("jane", &[0, 2]);
+        let spans = line.spans;
+        let joined: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(joined, "jane");
+        assert_eq!(spans.len(), 4, "four runs: j | a | n | e");
+        assert!(spans[0].style.fg == Some(Color::Yellow), "char 'j' should be yellow");
+        assert!(spans[2].style.fg == Some(Color::Yellow), "char 'n' should be yellow");
+        assert!(spans[1].style.fg.is_none(), "char 'a' should be plain");
+        assert!(spans[3].style.fg.is_none(), "char 'e' should be plain");
+    }
+
+    #[test]
+    fn highlighted_line_empty_hits_is_plain() {
+        let line = highlighted_line("hello", &[]);
+        assert_eq!(line.spans.len(), 1);
+        assert!(line.spans[0].style.fg.is_none());
+    }
 }

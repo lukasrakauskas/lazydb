@@ -61,6 +61,17 @@ pub struct ResultsClickGeom {
     pub cols: Vec<(usize, u16, u16)>,
 }
 
+/// Active fuzzy filter on the results. `matched` holds the absolute row
+// indices that pass the filter, best fuzzy score first. `offsets` maps each
+// matched abs row → byte offsets in that row's tab-joined text, so the renderer
+// can highlight the matched chars. The renderer + nav operate on the `matched`
+// subset; the cursor indexes into it.
+pub struct ResultFilter {
+    pub query: String,
+    pub matched: Vec<usize>,
+    pub offsets: std::collections::HashMap<usize, Vec<usize>>,
+}
+
 /// Map a click at screen `(x, y)` to `(row, col)` using the last-rendered
 // table geometry. `row` is `Some` only for body clicks; `col` is `Some` when
 // the click lands on a data column (body or header) — clicks in the row-num
@@ -134,7 +145,10 @@ pub struct App {
     pub form: Option<FormState>,
     rx: Option<Receiver<JobResult>>,
     pub status: String,
-    pub result_cursor_row: usize,
+    /// `None` = no selection (deselected: no highlight, copy/cursor nav no-op
+    // until something re-selects). Indexes into the currently *displayed* rows
+    // (full set, or the filtered subset when `result_filter` is active).
+    pub result_cursor_row: Option<usize>,
     pub result_scroll_row: usize,
     pub result_cursor_col: usize,
     pub result_scroll_col: usize,
@@ -144,6 +158,7 @@ pub struct App {
     pub results_visible_cols: usize,
     pub results_rect: Option<Rect>,
     pub results_click_geom: Option<ResultsClickGeom>,
+    pub result_filter: Option<ResultFilter>,
     pub features_open: bool,
     pub feature_cursor: usize,
     pub confirm_destructive: Option<String>,
@@ -183,7 +198,7 @@ impl App {
             form: None,
             rx: None,
             status: "Press 'n' to add a connection, then Enter to connect.".into(),
-            result_cursor_row: 0,
+            result_cursor_row: None,
             result_scroll_row: 0,
             result_cursor_col: 0,
             result_scroll_col: 0,
@@ -191,6 +206,7 @@ impl App {
             results_visible_cols: 0,
             results_rect: None,
             results_click_geom: None,
+            result_filter: None,
             features_open: false,
             feature_cursor: 0,
             confirm_destructive: None,
@@ -279,7 +295,8 @@ impl App {
         self.running_query = true;
         self.query_start = Some(Instant::now());
         self.status = "Running query…".into();
-        self.result_cursor_row = 0;
+        self.result_cursor_row = None;
+        self.result_filter = None;
         self.result_scroll_row = 0;
         self.result_cursor_col = 0;
         self.result_scroll_col = 0;
@@ -388,6 +405,7 @@ impl App {
             self.features_open,
             self.confirm_destructive.is_some(),
             self.autocomplete.is_some(),
+            self.result_filter.is_some(),
         );
         if let Some(action) = shortcuts::match_key(view, key) {
             self.apply_action(view, action);
@@ -428,11 +446,16 @@ impl App {
                     if n > 0 && self.conn_cursor + 1 < n { self.conn_cursor += 1; }
                 }
                 View::Results => {
-                    let last = match &self.output {
-                        Output::Table { rows, .. } => rows.len().saturating_sub(1),
-                        _ => return,
+                    // None (deselected) → first row; Some(i) → next, clamped
+                    // to the last *displayed* row (filtered subset or full set).
+                    let last = match self.result_dims() {
+                        (0, _) => return,
+                        (n, _) => n.saturating_sub(1),
                     };
-                    self.result_cursor_row = self.result_cursor_row.saturating_add(1).min(last);
+                    self.result_cursor_row = Some(match self.result_cursor_row {
+                        None => 0,
+                        Some(i) => i.saturating_add(1).min(last),
+                    });
                     self.scroll_cursor_row_into_view();
                 }
                 View::Schema => {
@@ -450,7 +473,15 @@ impl App {
                     if n > 0 && self.conn_cursor > 0 { self.conn_cursor -= 1; }
                 }
                 View::Results => {
-                    self.result_cursor_row = self.result_cursor_row.saturating_sub(1);
+                    // None (deselected) → last row; Some(i) → prev.
+                    let last = match self.result_dims() {
+                        (0, _) => return,
+                        (n, _) => n.saturating_sub(1),
+                    };
+                    self.result_cursor_row = Some(match self.result_cursor_row {
+                        None => last,
+                        Some(i) => i.saturating_sub(1),
+                    });
                     self.scroll_cursor_row_into_view();
                 }
                 View::Schema => self.schema_cursor = self.schema_cursor.saturating_sub(1),
@@ -483,13 +514,45 @@ impl App {
                 self.result_scroll_row = self.result_scroll_row.saturating_sub(vh);
             }
             Home => {
-                self.result_cursor_row = 0;
+                self.result_cursor_row = Some(0);
                 self.result_scroll_row = 0;
             }
             End => {
                 let (nrows, vh) = self.result_dims();
-                self.result_cursor_row = nrows.saturating_sub(1);
+                self.result_cursor_row = Some(nrows.saturating_sub(1));
                 self.result_scroll_row = nrows.saturating_sub(vh);
+            }
+
+            // Drop the row selection (no highlight, copy no-ops). Column cursor
+            // is left alone so the column guide stays where it was.
+            Deselect => self.result_cursor_row = None,
+
+            // Fuzzy filter on the results. `/` toggles the input mode; Enter
+            // commits and stays filtered (cursor deselected), Esc cancels and
+            // restores the full set, Backspace edits the query live.
+            ToggleFilter => {
+                if self.result_filter.is_some() {
+                    self.clear_filter();
+                } else {
+                    self.set_filter_query("");
+                }
+            }
+            FilterAccept => {
+                // ponytail: keep the filter active (committed) but drop the input
+                // mode — nav resumes on the filtered set. An empty query keeps
+                // all rows, so an empty accept is equivalent to cancel.
+                let empty = self.result_filter.as_ref().is_none_or(|f| f.query.is_empty());
+                if empty {
+                    self.clear_filter();
+                }
+            }
+            FilterCancel => self.clear_filter(),
+            FilterBackspace => {
+                if let Some(f) = self.result_filter.as_mut() {
+                    f.query.pop();
+                    let q = f.query.clone();
+                    self.set_filter_query(&q);
+                }
             }
 
             ConnectSelected => self.connect_selected(),
@@ -546,7 +609,8 @@ impl App {
     }
 
     /// Fall-through for keys that aren't any view's shortcut: typing a char
-    /// into the SQL editor / a form field. Non-editable views ignore it.
+    /// into the SQL editor, a form field, or the results filter query.
+    /// Non-editable views ignore it.
     fn handle_text_input(&mut self, view: View, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if let KeyCode::Char(c) = key.code {
@@ -556,6 +620,15 @@ impl App {
                     self.exit_history_browse();
                     self.editor.insert_char(c);
                     self.refresh_autocomplete();
+                }
+                View::ResultsFilter => {
+                    // Append to the live query and re-filter. Re-uses
+                    // `set_filter_query` so the matched set + scroll reset.
+                    let q = match &self.result_filter {
+                        Some(f) => format!("{}{c}", f.query),
+                        None => c.to_string(),
+                    };
+                    self.set_filter_query(&q);
                 }
                 View::Form => {
                     if let Some(f) = self.form.as_mut() {
@@ -568,25 +641,33 @@ impl App {
         }
     }
 
-    /// `(nrows, viewport_height)` for the current result table, or `(0,1)`
-    /// when there's no table. `viewport_height` is the body-row count from the
-    /// last render (≥1 so page/auto-follow math never divides by zero).
-    fn result_dims(&self) -> (usize, usize) {
-        let nrows = match &self.output {
-            Output::Table { rows, .. } => rows.len(),
-            _ => return (0, 1),
-        };
-        (nrows, self.results_body_h.max(1))
+    /// Number of rows currently displayed (filtered subset, or full count).
+    fn displayed_count(&self) -> usize {
+        match &self.output {
+            Output::Table { rows, .. } => match &self.result_filter {
+                Some(f) => f.matched.len(),
+                None => rows.len(),
+            },
+            _ => 0,
+        }
     }
 
-    /// Move the vertical viewport just enough to keep the cursor row visible,
-    /// leaving it in place otherwise (independent select + scroll).
+    /// `(displayed_rows, viewport_height)`. viewport_height is the body-row
+    /// count from the last render (≥1 so page/auto-follow math never divides
+    /// by zero).
+    fn result_dims(&self) -> (usize, usize) {
+        (self.displayed_count(), self.results_body_h.max(1))
+    }
+
+    /// Move the vertical viewport just enough to keep the selected row visible.
+    /// No-op when nothing is selected (deselected).
     fn scroll_cursor_row_into_view(&mut self) {
+        let Some(cur) = self.result_cursor_row else { return; };
         let vh = self.results_body_h.max(1);
-        if self.result_cursor_row < self.result_scroll_row {
-            self.result_scroll_row = self.result_cursor_row;
-        } else if self.result_cursor_row >= self.result_scroll_row + vh {
-            self.result_scroll_row = self.result_cursor_row.saturating_sub(vh - 1);
+        if cur < self.result_scroll_row {
+            self.result_scroll_row = cur;
+        } else if cur >= self.result_scroll_row + vh {
+            self.result_scroll_row = cur.saturating_sub(vh - 1);
         }
     }
 
@@ -600,16 +681,62 @@ impl App {
         }
     }
 
+    /// Absolute index of the selected displayed row, or `None` when deselected
+    /// (or the cursor is somehow out of range). Maps the cursor's index into the
+    /// displayed set back to the underlying row index.
+    fn selected_abs_row(&self) -> Option<usize> {
+        let cur = self.result_cursor_row?;
+        match &self.result_filter {
+            Some(f) => f.matched.get(cur).copied(),
+            None => Some(cur),
+        }
+    }
+
+    /// Re-run the fuzzy filter against the current result set with `query`,
+    /// storing the matched absolute indices. The cursor is deselected (the
+    /// previous selection may no longer be in the filtered set) and the viewport
+    /// resets to the top.
+    fn set_filter_query(&mut self, query: &str) {
+        // ponytail: one frizbee call returns both the ordered matched rows and
+        // the per-row matched byte offsets (for the FZF-style highlight).
+        let pairs = match &self.output {
+            Output::Table { rows, .. } => crate::filter::fuzzy_filter_indices(query, rows),
+            _ => Vec::new(),
+        };
+        let matched: Vec<usize> = pairs.iter().map(|(i, _)| *i).collect();
+        let offsets: std::collections::HashMap<usize, Vec<usize>> =
+            pairs.into_iter().collect();
+        self.result_filter = Some(ResultFilter { query: query.to_string(), matched, offsets });
+        self.result_cursor_row = None;
+        self.result_scroll_row = 0;
+    }
+
+    /// Drop the filter, restoring the full result set. Cursor stays deselected
+    /// so the user doesn't jump to a now-stale index.
+    fn clear_filter(&mut self) {
+        self.result_filter = None;
+        self.result_cursor_row = None;
+        self.result_scroll_row = 0;
+    }
+
     fn copy_row_json(&mut self) {
+        // Copy the *selected* row. Deselected (None cursor) → status hint, no copy.
+        let abs = match self.selected_abs_row() {
+            Some(i) => i,
+            None => {
+                self.status = "No row selected — press j/k or click to select.".into();
+                return;
+            }
+        };
         let json = match &self.output {
-            Output::Table { columns, rows, .. } => match rows.get(self.result_cursor_row) {
+            Output::Table { columns, rows, .. } => match rows.get(abs) {
                 Some(row) => row_to_json(columns, row),
                 None => return,
             },
             _ => return,
         };
         self.status = match copy_to_clipboard(&json) {
-            Ok(()) => format!("Copied row {} as JSON.", self.result_cursor_row + 1),
+            Ok(()) => format!("Copied row {} as JSON.", abs + 1),
             Err(e) => format!("Copy failed: {e}"),
         };
     }
@@ -972,13 +1099,19 @@ impl App {
             // row + col; header click sets only the column; clicks in the
             // row-num gutter or column gaps leave that axis unchanged).
             MouseEventKind::Down(MouseButton::Left) => {
+                // A click is an explicit "I want this exact row" — drop any
+                // active filter so the absolute row from the click geom maps
+                // directly to the cursor index (no filtered-subset translation).
+                if self.result_filter.is_some() {
+                    self.clear_filter();
+                }
                 let (row, col) = match &self.results_click_geom {
                     Some(geom) => click_to_cell(geom, self.result_scroll_row, m.column, m.row),
                     None => (None, None),
                 };
                 let mut moved = false;
                 if let Some(r) = row {
-                    self.result_cursor_row = r.min(last_row);
+                    self.result_cursor_row = Some(r.min(last_row));
                     self.scroll_cursor_row_into_view();
                     moved = true;
                 }
@@ -1391,33 +1524,34 @@ mod tests {
     #[test]
     fn results_cursor_auto_follows_viewport() {
         let mut app = results_app(30, 5, 5, 5);
-        // j from row 0: cursor advances, viewport holds until cursor would
-        // leave the bottom, then scroll keeps it on the last visible line.
-        for _ in 0..5 { press(&mut app, KeyCode::Char('j')); }
-        assert_eq!(app.result_cursor_row, 5);
+        // Cursor starts deselected (None). j selects row 0, then advances;
+        // viewport holds until the cursor would leave the bottom.
+        for _ in 0..6 { press(&mut app, KeyCode::Char('j')); }
+        assert_eq!(app.result_cursor_row, Some(5));
         assert_eq!(app.result_scroll_row, 1, "viewport scrolls to keep cursor at bottom");
         // k back up: viewport follows upward only when cursor crosses the top.
         press(&mut app, KeyCode::Char('k'));
-        assert_eq!(app.result_cursor_row, 4);
+        assert_eq!(app.result_cursor_row, Some(4));
         assert_eq!(app.result_scroll_row, 1, "no scroll up while cursor still visible");
         for _ in 0..5 { press(&mut app, KeyCode::Char('k')); }
-        assert_eq!(app.result_cursor_row, 0);
+        assert_eq!(app.result_cursor_row, Some(0));
         assert_eq!(app.result_scroll_row, 0, "viewport follows when cursor hits top");
     }
 
     #[test]
     fn results_page_scroll_is_independent_of_cursor() {
         let mut app = results_app(30, 5, 5, 5);
-        // move the cursor down a bit so it's not at the viewport top
-        for _ in 0..3 { press(&mut app, KeyCode::Char('j')); }
-        assert_eq!(app.result_cursor_row, 3);
+        // move the cursor down a bit (4 presses: None→0→1→2→3) so it's not
+        // at the viewport top.
+        for _ in 0..4 { press(&mut app, KeyCode::Char('j')); }
+        assert_eq!(app.result_cursor_row, Some(3));
         let cursor_before = app.result_cursor_row;
         // PgDn scrolls the viewport by a page; the cursor stays put.
         press(&mut app, KeyCode::PageDown);
         assert_eq!(app.result_cursor_row, cursor_before, "cursor must not move on PgDn");
         assert_eq!(app.result_scroll_row, 5, "viewport scrolled one page");
         // cursor is now above the viewport — independent scroll achieved.
-        assert!(app.result_cursor_row < app.result_scroll_row);
+        assert!(app.result_cursor_row.unwrap() < app.result_scroll_row);
         // PgDn clamps at the last page (max scroll = 30-5 = 25).
         for _ in 0..10 { press(&mut app, KeyCode::PageDown); }
         assert_eq!(app.result_scroll_row, 25);
@@ -1427,10 +1561,10 @@ mod tests {
     fn results_home_end_jump_cursor_and_follow() {
         let mut app = results_app(30, 5, 5, 5);
         press(&mut app, KeyCode::End);
-        assert_eq!(app.result_cursor_row, 29);
+        assert_eq!(app.result_cursor_row, Some(29));
         assert_eq!(app.result_scroll_row, 25, "End scrolls so the last row is at the viewport bottom");
         press(&mut app, KeyCode::Home);
-        assert_eq!(app.result_cursor_row, 0);
+        assert_eq!(app.result_cursor_row, Some(0));
         assert_eq!(app.result_scroll_row, 0);
     }
 
@@ -1438,7 +1572,7 @@ mod tests {
     fn results_mouse_wheel_scrolls_viewport_only() {
         let mut app = results_app(30, 5, 5, 5);
         app.results_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 10));
-        // park the cursor on row 2
+        // park the cursor on row 1 (2 presses: None→0→1)
         for _ in 0..2 { press(&mut app, KeyCode::Char('j')); }
         let cursor_before = app.result_cursor_row;
         // wheel down over the results pane
@@ -1453,9 +1587,12 @@ mod tests {
     #[test]
     fn results_copy_uses_cursor_not_scroll() {
         let mut app = results_app(30, 2, 5, 2);
+        // select row 0 first (cursor starts deselected)
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.result_cursor_row, Some(0));
         // scroll the viewport away from the cursor (cursor stays at 0)
         press(&mut app, KeyCode::PageDown);
-        assert_eq!(app.result_cursor_row, 0);
+        assert_eq!(app.result_cursor_row, Some(0));
         assert!(app.result_scroll_row > 0);
         // y copies the *cursor* row (0 → "0.0","0.1"), not the viewport top.
         press(&mut app, KeyCode::Char('y'));
@@ -1506,7 +1643,7 @@ mod tests {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 9, row: 4, modifiers: KeyModifiers::NONE,
         });
-        assert_eq!(app.result_cursor_row, 7);
+        assert_eq!(app.result_cursor_row, Some(7));
         assert_eq!(app.result_cursor_col, 1);
         assert!(app.focus == Focus::Results, "click focuses the results pane");
     }
@@ -1517,13 +1654,124 @@ mod tests {
         app.results_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 10));
         app.results_click_geom = Some(click_geom());
         // park the cursor on row 12 so we can see it's untouched by a header click
-        app.result_cursor_row = 12;
+        app.result_cursor_row = Some(12);
         // click header (y=1) at col 2 (x=15).
         app.handle_mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 15, row: 1, modifiers: KeyModifiers::NONE,
         });
         assert_eq!(app.result_cursor_col, 2);
-        assert_eq!(app.result_cursor_row, 12, "header click must not move the row cursor");
+        assert_eq!(app.result_cursor_row, Some(12), "header click must not move the row cursor");
+    }
+
+    #[test]
+    fn results_deselect_clears_cursor() {
+        let mut app = results_app(30, 5, 5, 5);
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.result_cursor_row, Some(0));
+        // 'd' deselects: no highlight, copy becomes a no-op status hint.
+        press(&mut app, KeyCode::Char('d'));
+        assert_eq!(app.result_cursor_row, None);
+        press(&mut app, KeyCode::Char('y'));
+        assert!(app.status.contains("No row selected"), "got: {}", app.status);
+    }
+
+    #[test]
+    fn results_down_from_deselected_selects_first_row() {
+        let mut app = results_app(30, 5, 5, 5);
+        assert_eq!(app.result_cursor_row, None);
+        press(&mut app, KeyCode::Char('j')); // None → Some(0)
+        assert_eq!(app.result_cursor_row, Some(0));
+        // up from deselected jumps to the last row.
+        let mut app2 = results_app(30, 5, 5, 5);
+        press(&mut app2, KeyCode::Char('k'));
+        assert_eq!(app2.result_cursor_row, Some(29));
+    }
+
+    #[test]
+    fn results_filter_narrows_and_ranks_by_score() {
+        let mut app = results_app(30, 2, 5, 2);
+        // rows are "r.0"/"r.1" for r in 0..30. Query "5" matches rows whose
+        // joined text contains '5': row 5 ("5.0","5.1") plus any other row
+        // with a '5' (15, 25). All three must be in the matched set.
+        app.set_filter_query("5");
+        let matched = app.result_filter.as_ref().unwrap().matched.clone();
+        assert!(matched.contains(&5) && matched.contains(&15) && matched.contains(&25),
+            "matched: {matched:?}");
+        // the displayed (filtered) count is the matched length.
+        assert_eq!(app.displayed_count(), matched.len());
+        // cursor was deselected when the filter applied.
+        assert_eq!(app.result_cursor_row, None);
+    }
+
+    #[test]
+    fn results_filter_empty_query_keeps_all_rows() {
+        let mut app = results_app(30, 2, 5, 2);
+        app.set_filter_query("");
+        assert_eq!(app.displayed_count(), 30);
+    }
+
+    #[test]
+    fn results_filter_clear_restores_full_set() {
+        let mut app = results_app(30, 2, 5, 2);
+        app.set_filter_query("5");
+        assert!(app.displayed_count() < 30);
+        app.clear_filter();
+        assert!(app.result_filter.is_none());
+        assert_eq!(app.displayed_count(), 30);
+        assert_eq!(app.result_cursor_row, None);
+    }
+
+    #[test]
+    fn results_filter_live_typing_appends_and_refilters() {
+        let mut app = results_app(30, 2, 5, 2);
+        // open the filter input mode and type '1' then '5' — simulates the
+        // handle_text_input path for the ResultsFilter view.
+        press(&mut app, KeyCode::Char('/'));
+        assert!(app.result_filter.is_some(), "/ opens filter mode");
+        app.handle_key(KeyEvent::new_with_kind_and_state(
+            KeyCode::Char('1'), KeyModifiers::NONE, KeyEventKind::Press, KeyEventState::NONE,
+        ));
+        let after_1 = app.displayed_count();
+        app.handle_key(KeyEvent::new_with_kind_and_state(
+            KeyCode::Char('5'), KeyModifiers::NONE, KeyEventKind::Press, KeyEventState::NONE,
+        ));
+        let q = app.result_filter.as_ref().unwrap().query.clone();
+        assert_eq!(q, "15");
+        // '15' matches rows 1, 15 (and 10..19 contain '1'+'5'? only 15 has both
+        // in order as substrings) — just assert the query was built live.
+        assert!(after_1 >= app.displayed_count(), "narrowing query must not grow the set");
+    }
+
+    #[test]
+    fn results_filter_backspace_edits_query() {
+        let mut app = results_app(30, 2, 5, 2);
+        app.set_filter_query("15");
+        // simulate FilterBackspace
+        press(&mut app, KeyCode::Char('/')); // re-open (toggles off then on? no — already on, so toggles OFF)
+        // re-open cleanly:
+        app.set_filter_query("15");
+        app.handle_key(KeyEvent::new_with_kind_and_state(
+            KeyCode::Backspace, KeyModifiers::NONE, KeyEventKind::Press, KeyEventState::NONE,
+        ));
+        assert_eq!(app.result_filter.as_ref().unwrap().query, "1");
+    }
+
+    #[test]
+    fn results_filter_enter_with_empty_query_cancels() {
+        let mut app = results_app(30, 2, 5, 2);
+        press(&mut app, KeyCode::Char('/')); // opens with empty query
+        assert!(app.result_filter.is_some());
+        press(&mut app, KeyCode::Enter); // FilterAccept on empty → cancel
+        assert!(app.result_filter.is_none(), "empty accept should cancel the filter");
+    }
+
+    #[test]
+    fn results_filter_esc_cancels() {
+        let mut app = results_app(30, 2, 5, 2);
+        app.set_filter_query("5");
+        press(&mut app, KeyCode::Esc);
+        assert!(app.result_filter.is_none());
+        assert_eq!(app.displayed_count(), 30);
     }
 }

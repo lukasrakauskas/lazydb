@@ -32,6 +32,7 @@ pub enum View {
     Editor,
     EditorAutocomplete,
     Results,
+    ResultsFilter,
     Schema,
 }
 
@@ -85,6 +86,13 @@ pub enum Action {
     // results
     CopyRowJson,
     CopyResultCsv,
+    Deselect,
+    // results fuzzy filter (a transient input mode of the Results view)
+    ToggleFilter,
+    FilterAccept,
+    FilterCancel,
+    /// Filter input row: delete the char before the cursor (Backspace).
+    FilterBackspace,
     // schema
     SchemaExpand,
     SchemaCollapse,
@@ -250,7 +258,16 @@ static RESULTS: &[Binding] = &[
     Binding { keys: &[bare(KeyCode::Home, "Home")], label: "top", action: Action::Home, hidden: false },
     Binding { keys: &[bare(KeyCode::End, "End")], label: "bottom", action: Action::End, hidden: false },
     Binding { keys: &[ch('y', "y")], label: "copy row", action: Action::CopyRowJson, hidden: false },
+    Binding { keys: &[ch('/', "/")], label: "filter", action: Action::ToggleFilter, hidden: false },
+    Binding { keys: &[ch('d', "d")], label: "deselect", action: Action::Deselect, hidden: false },
     Binding { keys: &[ctrl('s', "Ctrl+S")], label: "copy CSV", action: Action::CopyResultCsv, hidden: false },
+];
+
+static RESULTS_FILTER: &[Binding] = &[
+    Binding { keys: &[bare(KeyCode::Enter, "⏎")], label: "accept", action: Action::FilterAccept, hidden: false },
+    Binding { keys: &[bare(KeyCode::Esc, "Esc")], label: "cancel", action: Action::FilterCancel, hidden: false },
+    Binding { keys: &[bare(KeyCode::Backspace, "⌫")], label: "del", action: Action::FilterBackspace, hidden: false },
+    // typed chars fall through to raw text input (the filter query); no binding.
 ];
 
 static SCHEMA: &[Binding] = &[
@@ -290,6 +307,7 @@ fn view_bindings(view: View) -> &'static [Binding] {
         View::Editor => EDITOR,
         View::EditorAutocomplete => EDITOR_AUTOCOMPLETE,
         View::Results => RESULTS,
+        View::ResultsFilter => RESULTS_FILTER,
         View::Schema => SCHEMA,
         View::Form => FORM,
         View::Features => FEATURES,
@@ -332,6 +350,7 @@ pub fn current_view(
     features: bool,
     confirm: bool,
     autocomplete: bool,
+    result_filter: bool,
 ) -> View {
     if confirm {
         View::ConfirmDestructive
@@ -339,6 +358,8 @@ pub fn current_view(
         View::Form
     } else if features {
         View::Features
+    } else if result_filter {
+        View::ResultsFilter
     } else if autocomplete {
         View::EditorAutocomplete
     } else {
@@ -371,16 +392,16 @@ mod tests {
     #[test]
     fn current_view_modal_wins_over_focus_and_autocomplete() {
         assert_eq!(
-            current_view(Focus::Editor, true, true, true, true),
+            current_view(Focus::Editor, true, true, true, true, true),
             View::ConfirmDestructive
         );
-        assert_eq!(current_view(Focus::Editor, true, false, false, false), View::Form);
-        assert_eq!(current_view(Focus::Editor, false, true, false, false), View::Features);
+        assert_eq!(current_view(Focus::Editor, true, false, false, false, false), View::Form);
+        assert_eq!(current_view(Focus::Editor, false, true, false, false, false), View::Features);
         assert_eq!(
-            current_view(Focus::Editor, false, false, false, true),
+            current_view(Focus::Editor, false, false, false, true, false),
             View::EditorAutocomplete
         );
-        assert_eq!(current_view(Focus::Results, false, false, false, false), View::Results);
+        assert_eq!(current_view(Focus::Results, false, false, false, false, false), View::Results);
     }
 
     #[test]
