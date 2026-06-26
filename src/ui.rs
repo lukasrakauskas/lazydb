@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{
         Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState,
@@ -15,6 +15,7 @@ use crate::config::Features;
 use crate::highlight;
 use crate::filter::CellMatches;
 use crate::shortcuts;
+use crate::theme;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let main_chunks =
@@ -64,21 +65,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 }
 
 fn block<'a>(title: &'a str, num: &'a str, focused: bool) -> Block<'a> {
-    // lazygit-faithful: focused pane = bright accent (cyan) + bold border;
-    // unfocused = terminal default (Reset) — muted next to the active border
-    // and adaptive to dark/light themes. Mirrors lazygit's
-    // ActiveBorderColor ["green","bold"] / InactiveBorderColor ["default"].
-    let (color, bold) = if focused {
-        (Color::Cyan, Modifier::BOLD)
+    let (border, badge) = if focused {
+        (theme::FOCUSED_BORDER, theme::FOCUSED_BADGE)
     } else {
-        (Color::Reset, Modifier::empty())
+        (theme::UNFOCUSED_BORDER, theme::UNFOCUSED_BADGE)
     };
-    // lazygit-style plain bracket badges: [1] [2] [3] [4] — no colored box.
-    let badge = Style::default().fg(color).add_modifier(bold);
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(color).add_modifier(bold))
+        .border_style(border)
         .title(Line::from(vec![
             Span::styled(format!("[{num}]"), badge),
             Span::raw(" "),
@@ -98,18 +93,14 @@ fn draw_connections(f: &mut Frame, app: &App, area: Rect) {
                 "{prefix}{}  {}@{}:{}",
                 c.name, c.username, c.host, c.port
             ));
-            let style = if active {
-                Style::default().fg(Color::Green)
-            } else {
-                Style::default()
-            };
+            let style = if active { theme::ACTIVE_CONNECTION } else { Style::default() };
             ListItem::new(line).style(style)
         })
         .collect();
 
     let list = List::new(items)
         .block(block("Connections", "1", app.focus == Focus::Connections))
-        .highlight_style(Style::default().bg(Color::Gray).fg(Color::Black).add_modifier(Modifier::BOLD));
+        .highlight_style(theme::CONNECTION_HIGHLIGHT);
 
     let mut state = ListState::default();
     if !app.config.connections.is_empty() {
@@ -127,20 +118,13 @@ fn draw_schema(f: &mut Frame, app: &App, area: Rect) {
 
     let rows = app.schema_rows();
     if rows.is_empty() {
-        f.render_widget(
-            Paragraph::new("Connect to load schema.").style(Style::default().fg(Color::DarkGray)),
-            inner,
-        );
+        f.render_widget(Paragraph::new("Connect to load schema.").style(theme::PLACEHOLDER), inner);
         return;
     }
     let focused = app.focus == Focus::Schema;
     let lines: Vec<Line> = rows.iter().enumerate().map(|(i, entry)| {
         let selected = focused && i == app.schema_cursor;
-        let style = if selected {
-            Style::default().bg(Color::Cyan).fg(Color::Black)
-        } else {
-            Style::default()
-        };
+        let style = if selected { theme::SCHEMA_CURSOR } else { Style::default() };
         match entry {
             SchemaEntry::Table(t) => {
                 let mark = if app.schema_expanded.contains(t) { "▼" } else { "▶" };
@@ -161,19 +145,16 @@ fn draw_schema(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
-    // Inline block (not the shared `block()` helper) so we can add a
-    // right-aligned query-timing title. ponytail: only the editor needs it.
     let focused = app.focus == Focus::Editor;
-    let (color, bold) = if focused {
-        (Color::Cyan, Modifier::BOLD)
+    let (border, badge) = if focused {
+        (theme::FOCUSED_BORDER, theme::FOCUSED_BADGE)
     } else {
-        (Color::Reset, Modifier::empty())
+        (theme::UNFOCUSED_BORDER, theme::UNFOCUSED_BADGE)
     };
-    let badge = Style::default().fg(color).add_modifier(bold);
     let mut b = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(color).add_modifier(bold))
+        .border_style(border)
         .title_top(Line::from(vec![
             Span::styled("[2]".to_string(), badge),
             Span::raw(" "),
@@ -223,11 +204,7 @@ fn draw_autocomplete(f: &mut Frame, app: &App, area: Rect, cursor: (u16, u16)) {
     let rect = Rect { x: px, y: py, width: w, height: h };
     f.render_widget(Clear, rect);
     let lines: Vec<Line> = ac.items.iter().take(count).enumerate().map(|(i, s)| {
-        let style = if i == ac.cursor {
-            Style::default().bg(Color::Cyan).fg(Color::Black)
-        } else {
-            Style::default().bg(Color::DarkGray).fg(Color::White)
-        };
+        let style = if i == ac.cursor { theme::AUTOCOMPLETE_CURSOR } else { theme::AUTOCOMPLETE_ITEM };
         Line::from(Span::styled(format!("{:width$}", s, width = w as usize), style))
     }).collect();
     f.render_widget(Paragraph::new(lines), rect);
@@ -261,10 +238,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(b, area);
 
     match &app.output {
-        Output::Empty => f.render_widget(
-            Paragraph::new("No query run yet.").style(Style::default().fg(Color::DarkGray)),
-            inner,
-        ),
+        Output::Empty => f.render_widget(Paragraph::new("No query run yet.").style(theme::PLACEHOLDER), inner),
         Output::Message(m) => f.render_widget(
             Paragraph::new(m.as_str()).wrap(Wrap { trim: false }),
             inner,
@@ -449,9 +423,9 @@ fn draw_table(
         // glow show through even on the selected row/column/cell. The Gray
         // guides + Cyan cell bg alone mark selection clearly; forcing fg
         // would clobber the matched-char color.
-        .row_highlight_style(Style::default().bg(Color::Gray))
-        .column_highlight_style(Style::default().bg(Color::Gray))
-        .cell_highlight_style(Style::default().bg(Color::Cyan))
+        .row_highlight_style(theme::ROW_HIGHLIGHT)
+        .column_highlight_style(theme::COLUMN_HIGHLIGHT)
+        .cell_highlight_style(theme::CELL_HIGHLIGHT)
         // no symbol gutter — the row-num column is our gutter
         .highlight_spacing(HighlightSpacing::Never);
 
@@ -479,10 +453,7 @@ fn draw_table(
             height: table_area.height.saturating_sub(1),
             ..table_area
         };
-        f.render_widget(
-            Paragraph::new("(no rows)").style(Style::default().fg(Color::DarkGray)),
-            body,
-        );
+        f.render_widget(Paragraph::new("(no rows)").style(theme::PLACEHOLDER), body);
     }
 
     // Scrollbars reflect the manual offsets.
@@ -536,9 +507,9 @@ fn draw_table(
 // Cyan-bold prompt + Gray-bold query (dark, readable — White was too bright).
 fn draw_filter_bar(f: &mut Frame, query: &str, area: Rect) {
     let line = Line::from(vec![
-        Span::styled("filter: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::styled(query.to_owned(), Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD)),
-        Span::styled("▏", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled("filter: ", theme::FILTER_PROMPT),
+        Span::styled(query.to_owned(), theme::FILTER_QUERY),
+        Span::styled("▏", theme::FILTER_CURSOR),
     ]);
     f.render_widget(Paragraph::new(line), area);
 }
@@ -560,21 +531,13 @@ fn highlighted_line(s: &str, hits: &[usize]) -> Line<'static> {
         let is_hit = hit.contains(&b);
         if is_hit != buf_hit && !buf.is_empty() {
             let text = std::mem::take(&mut buf);
-            spans.push(if buf_hit {
-                Span::styled(text, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-            } else {
-                Span::raw(text)
-            });
+            spans.push(if buf_hit { Span::styled(text, theme::MATCHED_CHAR) } else { Span::raw(text) });
         }
         buf.push(ch);
         buf_hit = is_hit;
     }
     if !buf.is_empty() {
-        spans.push(if buf_hit {
-            Span::styled(buf, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-        } else {
-            Span::raw(buf)
-        });
+        spans.push(if buf_hit { Span::styled(buf, theme::MATCHED_CHAR) } else { Span::raw(buf) });
     }
     Line::from(spans)
 }
@@ -594,12 +557,9 @@ fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
     let mut spans: Vec<Span> = vec![Span::raw(" ")];
     for (i, b) in shortcuts::bar_bindings(view).enumerate() {
         if i > 0 { spans.push(Span::raw("  ")); }
-        spans.push(Span::styled(
-            b.keys_display(),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        ));
+        spans.push(Span::styled(b.keys_display(), theme::SHORTCUT_KEY));
         spans.push(Span::raw(" "));
-        spans.push(Span::styled(b.label, Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(b.label, theme::SHORTCUT_LABEL));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -637,7 +597,7 @@ fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .title("New Connection  (Enter: save, Esc: cancel, Tab: next field)")
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(theme::FORM_BORDER);
     let inner = b.inner(pop);
     f.render_widget(b, pop);
 
@@ -648,13 +608,9 @@ fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
         } else {
             form.fields[i].clone()
         };
-        let val_style = if i == form.active {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
-        } else {
-            Style::default()
-        };
+        let val_style = if i == form.active { theme::FORM_ACTIVE_FIELD } else { Style::default() };
         lines.push(Line::from(vec![
-            Span::styled(format!("{label:>9}: "), Style::default().fg(Color::Gray)),
+            Span::styled(format!("{label:>9}: "), theme::FORM_LABEL),
             Span::styled(val, val_style),
         ]));
     }
@@ -680,7 +636,7 @@ fn draw_features(f: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .title("Features  (Space: toggle  j/k: move  Esc/f/q: close)")
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(theme::FEATURES_BORDER);
     let inner = b.inner(pop);
     f.render_widget(b, pop);
 
@@ -689,15 +645,17 @@ fn draw_features(f: &mut Frame, app: &App, area: Rect) {
         let on = app.config.features.get(i);
         let selected = i == app.feature_cursor;
         let mark_style = if selected {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
+            theme::FEATURE_CURSOR
+        } else if on {
+            theme::FEATURE_TOGGLE_ON
         } else {
-            Style::default().fg(if on { Color::Green } else { Color::DarkGray })
+            theme::FEATURE_TOGGLE_OFF
         };
         lines.push(Line::from(vec![
             Span::styled(format!(" {} ", if on { "[x]" } else { "[ ]" }), mark_style),
             Span::styled(*name, Style::default().add_modifier(Modifier::BOLD)),
             Span::raw("  "),
-            Span::styled(*desc, Style::default().fg(Color::DarkGray)),
+            Span::styled(*desc, theme::FEATURE_DESC),
         ]));
         lines.push(Line::from(""));
     }
@@ -726,17 +684,14 @@ fn draw_confirm_destructive(f: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .title(" Destructive Query ")
-        .border_style(Style::default().fg(Color::Red));
+        .border_style(theme::DESTRUCTIVE_BORDER);
     let inner = b.inner(pop);
     f.render_widget(b, pop);
 
     let msg = vec![
         Line::from(Span::raw(line)),
         Line::from(""),
-        Line::from(Span::styled(
-            " This will modify or delete data.",
-            Style::default().fg(Color::Red),
-        )),
+        Line::from(Span::styled(" This will modify or delete data.", theme::DESTRUCTIVE_TEXT)),
         Line::from(" Press  y  to confirm  ·  n / Esc  to cancel"),
     ];
     f.render_widget(Paragraph::new(msg).wrap(Wrap { trim: false }), inner);
@@ -764,16 +719,17 @@ mod tests {
 
     #[test]
     fn highlighted_line_marks_matched_chars() {
+        use ratatui::style::Color;
         // "jane" with hits at byte offsets 0 and 2 (j, n) → 'j','n' bold
-        // yellow, 'a','e' plain. Runs merge same-style chars, so 4 spans:
+        // magenta, 'a','e' plain. Runs merge same-style chars, so 4 spans:
         // hit(j) | plain(a) | hit(n) | plain(e).
         let line = highlighted_line("jane", &[0, 2]);
         let spans = line.spans;
         let joined: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(joined, "jane");
         assert_eq!(spans.len(), 4, "four runs: j | a | n | e");
-        assert!(spans[0].style.fg == Some(Color::Yellow), "char 'j' should be yellow");
-        assert!(spans[2].style.fg == Some(Color::Yellow), "char 'n' should be yellow");
+        assert!(spans[0].style.fg == Some(Color::Magenta), "char 'j' should be magenta");
+        assert!(spans[2].style.fg == Some(Color::Magenta), "char 'n' should be magenta");
         assert!(spans[1].style.fg.is_none(), "char 'a' should be plain");
         assert!(spans[3].style.fg.is_none(), "char 'e' should be plain");
     }

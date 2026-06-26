@@ -5,14 +5,9 @@
 // ASCII-only scanning (the editor itself is byte-indexed ASCII); non-ASCII
 // identifiers fall through as plain text, which is correct for highlighting.
 
-use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 
-const KEYWORD: Style = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-const FUNCTION: Style = Style::new().fg(Color::Blue);
-const STRING: Style = Style::new().fg(Color::Green);
-const NUMBER: Style = Style::new().fg(Color::Yellow);
-const COMMENT: Style = Style::new().fg(Color::DarkGray);
+use crate::theme;
 
 /// SQL keywords + common types, uppercased. Matched case-insensitively.
 pub const KEYWORDS: &[&str] = &[
@@ -57,12 +52,12 @@ pub fn highlight_line(line: &str, in_block: &mut bool) -> Vec<Span<'static>> {
     if *in_block {
         match line.find("*/") {
             Some(pos) => {
-                spans.push(Span::styled(line[..pos + 2].to_string(), COMMENT));
+                spans.push(Span::styled(line[..pos + 2].to_string(), theme::SQL_COMMENT));
                 i = pos + 2;
                 *in_block = false;
             }
             None => {
-                spans.push(Span::styled(line.to_string(), COMMENT));
+                spans.push(Span::styled(line.to_string(), theme::SQL_COMMENT));
                 return spans;
             }
         }
@@ -74,7 +69,7 @@ pub fn highlight_line(line: &str, in_block: &mut bool) -> Vec<Span<'static>> {
         // Line comments: `--` and MySQL `#`.
         if c == b'#' || (c == b'-' && i + 1 < n && b[i + 1] == b'-') {
             flush!();
-            spans.push(Span::styled(line[i..].to_string(), COMMENT));
+            spans.push(Span::styled(line[i..].to_string(), theme::SQL_COMMENT));
             return spans;
         }
         // Block comment start.
@@ -83,11 +78,11 @@ pub fn highlight_line(line: &str, in_block: &mut bool) -> Vec<Span<'static>> {
             match line[i + 2..].find("*/") {
                 Some(pos) => {
                     let end = i + 2 + pos + 2;
-                    spans.push(Span::styled(line[i..end].to_string(), COMMENT));
+                    spans.push(Span::styled(line[i..end].to_string(), theme::SQL_COMMENT));
                     i = end;
                 }
                 None => {
-                    spans.push(Span::styled(line[i..].to_string(), COMMENT));
+                    spans.push(Span::styled(line[i..].to_string(), theme::SQL_COMMENT));
                     *in_block = true;
                     return spans;
                 }
@@ -111,7 +106,7 @@ pub fn highlight_line(line: &str, in_block: &mut bool) -> Vec<Span<'static>> {
                 j += 1;
             }
             let end = j.min(n);
-            spans.push(Span::styled(line[i..end].to_string(), STRING));
+            spans.push(Span::styled(line[i..end].to_string(), theme::SQL_STRING));
             i = end;
             continue;
         }
@@ -122,7 +117,7 @@ pub fn highlight_line(line: &str, in_block: &mut bool) -> Vec<Span<'static>> {
             while j < n && (b[j].is_ascii_digit() || b[j] == b'.') {
                 j += 1;
             }
-            spans.push(Span::styled(line[i..j].to_string(), NUMBER));
+            spans.push(Span::styled(line[i..j].to_string(), theme::SQL_NUMBER));
             i = j;
             continue;
         }
@@ -135,7 +130,7 @@ pub fn highlight_line(line: &str, in_block: &mut bool) -> Vec<Span<'static>> {
             }
             let word = &line[i..j];
             if is_keyword(word) {
-                spans.push(Span::styled(word.to_string(), KEYWORD));
+                spans.push(Span::styled(word.to_string(), theme::SQL_KEYWORD));
                 i = j;
                 continue;
             }
@@ -145,7 +140,7 @@ pub fn highlight_line(line: &str, in_block: &mut bool) -> Vec<Span<'static>> {
                 k += 1;
             }
             if k < n && b[k] == b'(' {
-                spans.push(Span::styled(word.to_string(), FUNCTION));
+                spans.push(Span::styled(word.to_string(), theme::SQL_FUNCTION));
             } else {
                 // Plain identifier — keep as default text to avoid extra spans.
                 plain.push_str(word);
@@ -177,8 +172,8 @@ mod tests {
         let joined: String = s.iter().map(|sp| sp.content.as_ref()).collect();
         assert_eq!(joined, "SELECT 'x', 42 -- done");
         // Keyword span is styled (non-default), string span too.
-        assert_eq!(s[0].style, KEYWORD);
-        assert_eq!(s[2].style, STRING);
+        assert_eq!(s[0].style, theme::SQL_KEYWORD);
+        assert_eq!(s[2].style, theme::SQL_STRING);
     }
 
     #[test]
@@ -187,9 +182,9 @@ mod tests {
         let s = highlight_line("count(*) from t", &mut blk);
         // `count` followed by `(` → FUNCTION style; `from` → KEYWORD; `t` plain.
         let count = s.iter().find(|sp| sp.content.as_ref() == "count").unwrap();
-        assert_eq!(count.style, FUNCTION);
+        assert_eq!(count.style, theme::SQL_FUNCTION);
         let from = s.iter().find(|sp| sp.content.as_ref() == "from").unwrap();
-        assert_eq!(from.style, KEYWORD);
+        assert_eq!(from.style, theme::SQL_KEYWORD);
     }
 
     #[test]
@@ -198,13 +193,13 @@ mod tests {
         let s1 = highlight_line("/* open", &mut blk);
         assert!(blk, "block comment should carry over");
         assert_eq!(s1.len(), 1);
-        assert_eq!(s1[0].style, COMMENT);
+        assert_eq!(s1[0].style, theme::SQL_COMMENT);
 
         let s2 = highlight_line("still inside */ select", &mut blk);
         assert!(!blk, "block comment should close");
         // First span is the comment up to */, last span is keyword select.
-        assert_eq!(s2.first().unwrap().style, COMMENT);
+        assert_eq!(s2.first().unwrap().style, theme::SQL_COMMENT);
         let sel = s2.iter().find(|sp| sp.content.as_ref() == "select").unwrap();
-        assert_eq!(sel.style, KEYWORD);
+        assert_eq!(sel.style, theme::SQL_KEYWORD);
     }
 }

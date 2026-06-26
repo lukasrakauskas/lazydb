@@ -5,6 +5,7 @@ mod db;
 mod editor;
 mod filter;
 mod highlight;
+mod theme;
 mod ui;
 mod shortcuts;
 
