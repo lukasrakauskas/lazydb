@@ -5,30 +5,34 @@ mod db;
 mod editor;
 mod filter;
 mod highlight;
+mod shortcuts;
 mod theme;
 mod ui;
-mod shortcuts;
 
 use std::io;
 
 use anyhow::Result;
 use crossterm::{
-    execute,
     event::{
         DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
         PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
-
+use ratatui::{Terminal, backend::CrosstermBackend};
 
 /// Restores the terminal even if the app panics.
 struct Guard;
 impl Drop for Guard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture, PopKeyboardEnhancementFlags);
+        let _ = execute!(
+            io::stdout(),
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+            PopKeyboardEnhancementFlags
+        );
     }
 }
 
@@ -54,7 +58,10 @@ fn main() -> Result<()> {
     // ponytail: Kitty keyboard protocol so Shift+Enter (and other modified keys)
     // report their modifiers. No-op on terminals that don't support it; errors on
     // the legacy Windows console (ignored) where modifiers are reported natively.
-    let _ = execute!(stdout, PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
+    let _ = execute!(
+        stdout,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    );
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 

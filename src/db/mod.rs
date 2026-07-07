@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub mod mysql;
 pub mod sql;

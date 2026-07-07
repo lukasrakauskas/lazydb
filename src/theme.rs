@@ -8,8 +8,9 @@ pub const UNFOCUSED_BADGE: Style = Style::new().fg(Color::Reset);
 
 // ── Connections ──────────────────────────────────────────────────────
 pub const ACTIVE_CONNECTION: Style = Style::new().fg(Color::Green);
-pub const CONNECTION_HIGHLIGHT: Style =
-    Style::new().add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED);
+pub const CONNECTION_HIGHLIGHT: Style = Style::new()
+    .add_modifier(Modifier::BOLD)
+    .add_modifier(Modifier::REVERSED);
 
 // ── Schema ───────────────────────────────────────────────────────────
 pub const SCHEMA_CURSOR: Style = Style::new().add_modifier(Modifier::REVERSED);

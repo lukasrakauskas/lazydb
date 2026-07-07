@@ -1,29 +1,32 @@
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState,
-        Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState,
-        Wrap,
+        Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph,
+        Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
     },
-    Frame,
 };
 
-use crate::app::{App, EditCellState, Focus, FormState, Output, ResultsClickGeom, SchemaEntry, SchemaOpt};
+use crate::app::{
+    App, EditCellState, Focus, FormState, Output, ResultsClickGeom, SchemaEntry, SchemaOpt,
+};
 use crate::config::Features;
-use crate::highlight;
 use crate::filter::CellMatches;
+use crate::highlight;
 use crate::shortcuts;
 use crate::theme;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let main_chunks =
-        Layout::default().direction(Direction::Vertical).constraints([
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
             Constraint::Min(3),
             Constraint::Length(1), // shortcuts bar — active view's keymap
             Constraint::Length(1), // status / log line
-        ]).split(f.area());
+        ])
+        .split(f.area());
     let main = main_chunks[0];
     let shortcuts_bar = main_chunks[1];
     let status = main_chunks[2];
@@ -97,7 +100,11 @@ fn draw_connections(f: &mut Frame, app: &App, area: Rect) {
                 "{prefix}{}  {}@{}:{}",
                 c.name, c.username, c.host, c.port
             ));
-            let style = if active { theme::ACTIVE_CONNECTION } else { Style::default() };
+            let style = if active {
+                theme::ACTIVE_CONNECTION
+            } else {
+                Style::default()
+            };
             ListItem::new(line).style(style)
         })
         .collect();
@@ -122,29 +129,44 @@ fn draw_schema(f: &mut Frame, app: &App, area: Rect) {
 
     let rows = app.schema_rows();
     if rows.is_empty() {
-        f.render_widget(Paragraph::new("Connect to load schema.").style(theme::PLACEHOLDER), inner);
+        f.render_widget(
+            Paragraph::new("Connect to load schema.").style(theme::PLACEHOLDER),
+            inner,
+        );
         return;
     }
     let focused = app.focus == Focus::Schema;
-    let lines: Vec<Line> = rows.iter().enumerate().map(|(i, entry)| {
-        let selected = focused && i == app.schema_cursor;
-        let style = if selected { theme::SCHEMA_CURSOR } else { Style::default() };
-        match entry {
-            SchemaEntry::Table(t) => {
-                let mark = if app.schema_expanded.contains(t) { "▼" } else { "▶" };
-                Line::from(Span::styled(format!(" {mark} {t}"), style))
+    let lines: Vec<Line> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let selected = focused && i == app.schema_cursor;
+            let style = if selected {
+                theme::SCHEMA_CURSOR
+            } else {
+                Style::default()
+            };
+            match entry {
+                SchemaEntry::Table(t) => {
+                    let mark = if app.schema_expanded.contains(t) {
+                        "▼"
+                    } else {
+                        "▶"
+                    };
+                    Line::from(Span::styled(format!(" {mark} {t}"), style))
+                }
+                SchemaEntry::Leaf { opt, .. } => {
+                    let label = match opt {
+                        SchemaOpt::Rows => "rows",
+                        SchemaOpt::Columns => "columns",
+                        SchemaOpt::Constraints => "constraints",
+                        SchemaOpt::Indexes => "indexes",
+                    };
+                    Line::from(Span::styled(format!("    {label}"), style))
+                }
             }
-            SchemaEntry::Leaf { opt, .. } => {
-                let label = match opt {
-                    SchemaOpt::Rows => "rows",
-                    SchemaOpt::Columns => "columns",
-                    SchemaOpt::Constraints => "constraints",
-                    SchemaOpt::Indexes => "indexes",
-                };
-                Line::from(Span::styled(format!("    {label}"), style))
-            }
-        }
-    }).collect();
+        })
+        .collect();
     f.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -196,28 +218,66 @@ fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
 /// above the cursor when there's no room below. ponytail: no border, just a
 /// filled rect so it stays a 1-line-per-item overlay.
 fn draw_autocomplete(f: &mut Frame, app: &App, area: Rect, cursor: (u16, u16)) {
-    let Some(ac) = &app.autocomplete else { return; };
-    if ac.items.is_empty() { return; }
+    let Some(ac) = &app.autocomplete else {
+        return;
+    };
+    if ac.items.is_empty() {
+        return;
+    }
     let max_h = 6usize;
     let count = ac.items.len().min(max_h);
-    let w = ac.items.iter().take(count).map(|s| s.chars().count()).max().unwrap_or(0) as u16 + 1;
+    let w = ac
+        .items
+        .iter()
+        .take(count)
+        .map(|s| s.chars().count())
+        .max()
+        .unwrap_or(0) as u16
+        + 1;
     let h = count as u16;
     let (cx, cy) = cursor;
-    let py = if cy + 1 + h <= area.bottom() { cy + 1 } else { cy.saturating_sub(h) };
+    let py = if cy + 1 + h <= area.bottom() {
+        cy + 1
+    } else {
+        cy.saturating_sub(h)
+    };
     let px = cx.min(area.right().saturating_sub(w));
-    let rect = Rect { x: px, y: py, width: w, height: h };
+    let rect = Rect {
+        x: px,
+        y: py,
+        width: w,
+        height: h,
+    };
     f.render_widget(Clear, rect);
-    let lines: Vec<Line> = ac.items.iter().take(count).enumerate().map(|(i, s)| {
-        let style = if i == ac.cursor { theme::AUTOCOMPLETE_CURSOR } else { theme::AUTOCOMPLETE_ITEM };
-        Line::from(Span::styled(format!("{:width$}", s, width = w as usize), style))
-    }).collect();
+    let lines: Vec<Line> = ac
+        .items
+        .iter()
+        .take(count)
+        .enumerate()
+        .map(|(i, s)| {
+            let style = if i == ac.cursor {
+                theme::AUTOCOMPLETE_CURSOR
+            } else {
+                theme::AUTOCOMPLETE_ITEM
+            };
+            Line::from(Span::styled(
+                format!("{:width$}", s, width = w as usize),
+                style,
+            ))
+        })
+        .collect();
     f.render_widget(Paragraph::new(lines), rect);
 }
 
 fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
     app.results_rect = Some(area);
     let title = match &app.output {
-        Output::Table { columns, rows, rows_affected, .. } if !columns.is_empty() => {
+        Output::Table {
+            columns,
+            rows,
+            rows_affected,
+            ..
+        } if !columns.is_empty() => {
             // Title shows displayed count when filtered, plus the filter query.
             let (nrows, suffix) = match &app.result_filter {
                 Some(f) => (f.matched.len(), format!("  ·  filter: '{}'", f.query)),
@@ -242,12 +302,19 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(b, area);
 
     match &app.output {
-        Output::Empty => f.render_widget(Paragraph::new("No query run yet.").style(theme::PLACEHOLDER), inner),
-        Output::Message(m) => f.render_widget(
-            Paragraph::new(m.as_str()).wrap(Wrap { trim: false }),
+        Output::Empty => f.render_widget(
+            Paragraph::new("No query run yet.").style(theme::PLACEHOLDER),
             inner,
         ),
-        Output::Table { columns, rows, rows_affected, .. } => {
+        Output::Message(m) => {
+            f.render_widget(Paragraph::new(m.as_str()).wrap(Wrap { trim: false }), inner)
+        }
+        Output::Table {
+            columns,
+            rows,
+            rows_affected,
+            ..
+        } => {
             if columns.is_empty() {
                 f.render_widget(
                     Paragraph::new(format!("{rows_affected} rows affected")),
@@ -267,12 +334,18 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
                 [Rect::ZERO, inner]
             };
             if let Some(rf) = &app.result_filter {
-                let [filter_bar, _] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(bar_area);
+                let [filter_bar, _] =
+                    Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(bar_area);
                 draw_filter_bar(f, &rf.query, filter_bar);
             }
             if let Some(edit) = &app.edit_cell {
                 let edit_y = bar_area.y + if has_filter { 1 } else { 0 };
-                let edit_bar = Rect { x: bar_area.x, y: edit_y, width: bar_area.width, height: 1 };
+                let edit_bar = Rect {
+                    x: bar_area.x,
+                    y: edit_y,
+                    width: bar_area.width,
+                    height: 1,
+                };
                 draw_edit_bar(f, edit, edit_bar);
             }
             let table_area = rest;
@@ -281,7 +354,10 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
             // and the matched-char highlight lookup.
             let (disp, disp_abs): (Vec<Vec<String>>, Vec<usize>) = match &app.result_filter {
                 Some(f) => (
-                    f.matched.iter().filter_map(|&i| rows.get(i).cloned()).collect(),
+                    f.matched
+                        .iter()
+                        .filter_map(|&i| rows.get(i).cloned())
+                        .collect(),
                     f.matched.clone(),
                 ),
                 None => (rows.clone(), (0..rows.len()).collect()),
@@ -294,7 +370,13 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
                 app.result_scroll_col,
             );
             let (body_h, vis_cols, geom) = draw_table(
-                f, columns, &disp, table_area, (cr, sr, cc, sc), &disp_abs, offsets,
+                f,
+                columns,
+                &disp,
+                table_area,
+                (cr, sr, cc, sc),
+                &disp_abs,
+                offsets,
             );
             app.results_click_geom = Some(geom);
             app.results_body_h = body_h;
@@ -317,8 +399,12 @@ fn visible_columns(widths: &[usize], col_off: usize, budget: usize, gutter: usiz
     let mut vis: Vec<usize> = Vec::new();
     let mut used = gutter;
     for (c, &w) in widths.iter().enumerate().skip(col_off) {
-        if !vis.is_empty() { used += 1; }
-        if used + w > budget { break; }
+        if !vis.is_empty() {
+            used += 1;
+        }
+        if used + w > budget {
+            break;
+        }
         used += w;
         vis.push(c);
     }
@@ -396,7 +482,9 @@ fn draw_table(
     // First column = row number; then the visible data columns.
     let mut header_cells: Vec<String> = Vec::with_capacity(vis.len() + 1);
     header_cells.push("#".to_string());
-    for &c in &vis { header_cells.push(columns[c].clone()); }
+    for &c in &vis {
+        header_cells.push(columns[c].clone());
+    }
     let header = Row::new(header_cells).style(Style::default().add_modifier(Modifier::BOLD));
 
     // Slice the visible rows ourselves (ratatui's TableState.offset would
@@ -409,7 +497,10 @@ fn draw_table(
         let abs = disp_abs.get(first + rel).copied().unwrap_or(first + rel);
         // Per-cell matched offsets for this row (from the active filter), so
         // each visible cell can highlight the chars the query matched within it.
-        let matched_cells = offsets.and_then(|m| m.get(&abs)).cloned().unwrap_or_default();
+        let matched_cells = offsets
+            .and_then(|m| m.get(&abs))
+            .cloned()
+            .unwrap_or_default();
         let mut cells: Vec<Line> = Vec::with_capacity(vis.len() + 1);
         cells.push(Line::from(format!("{:>width$}", abs + 1, width = rownum_w)));
         for &c in &vis {
@@ -561,13 +652,21 @@ fn highlighted_line(s: &str, hits: &[usize]) -> Line<'static> {
         let is_hit = hit.contains(&b);
         if is_hit != buf_hit && !buf.is_empty() {
             let text = std::mem::take(&mut buf);
-            spans.push(if buf_hit { Span::styled(text, theme::MATCHED_CHAR) } else { Span::raw(text) });
+            spans.push(if buf_hit {
+                Span::styled(text, theme::MATCHED_CHAR)
+            } else {
+                Span::raw(text)
+            });
         }
         buf.push(ch);
         buf_hit = is_hit;
     }
     if !buf.is_empty() {
-        spans.push(if buf_hit { Span::styled(buf, theme::MATCHED_CHAR) } else { Span::raw(buf) });
+        spans.push(if buf_hit {
+            Span::styled(buf, theme::MATCHED_CHAR)
+        } else {
+            Span::raw(buf)
+        });
     }
     Line::from(spans)
 }
@@ -588,7 +687,9 @@ fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
     );
     let mut spans: Vec<Span> = vec![Span::raw(" ")];
     for (i, b) in shortcuts::bar_bindings(view).enumerate() {
-        if i > 0 { spans.push(Span::raw("  ")); }
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
         spans.push(Span::styled(b.keys_display(), theme::SHORTCUT_KEY));
         spans.push(Span::raw(" "));
         spans.push(Span::styled(b.label, theme::SHORTCUT_LABEL));
@@ -597,7 +698,10 @@ fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
-    let conn = app.db_name.clone().unwrap_or_else(|| "not connected".into());
+    let conn = app
+        .db_name
+        .clone()
+        .unwrap_or_else(|| "not connected".into());
     let spinner = if app.running_query { " ⏳" } else { "" };
     let left = format!(" {conn}{spinner} | {} ", app.status);
     // ponytail: the key-log inspector shares this line (right side). The
@@ -607,14 +711,8 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     } else {
         String::new()
     };
-    let line = Line::from(vec![
-        Span::raw(left),
-        Span::raw(right),
-    ]);
-    f.render_widget(
-        Paragraph::new(line),
-        area,
-    );
+    let line = Line::from(vec![Span::raw(left), Span::raw(right)]);
+    f.render_widget(Paragraph::new(line), area);
 }
 
 fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
@@ -622,7 +720,12 @@ fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
     let h = 12.min(area.height);
     let x = area.x + (area.width - w) / 2;
     let y = area.y + (area.height - h) / 2;
-    let pop = Rect { x, y, width: w, height: h };
+    let pop = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
     f.render_widget(Clear, pop);
 
     let b = Block::default()
@@ -640,7 +743,11 @@ fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
         } else {
             form.fields[i].clone()
         };
-        let val_style = if i == form.active { theme::FORM_ACTIVE_FIELD } else { Style::default() };
+        let val_style = if i == form.active {
+            theme::FORM_ACTIVE_FIELD
+        } else {
+            Style::default()
+        };
         lines.push(Line::from(vec![
             Span::styled(format!("{label:>9}: "), theme::FORM_LABEL),
             Span::styled(val, val_style),
@@ -661,7 +768,12 @@ fn draw_features(f: &mut Frame, app: &App, area: Rect) {
     let w = 70.min(area.width);
     let x = area.x + (area.width - w) / 2;
     let y = area.y + (area.height - h) / 2;
-    let pop = Rect { x, y, width: w, height: h };
+    let pop = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
     f.render_widget(Clear, pop);
 
     let b = Block::default()
@@ -699,7 +811,12 @@ fn draw_confirm_destructive(f: &mut Frame, app: &App, area: Rect) {
     let h = 8.min(area.height);
     let x = area.x + (area.width - w) / 2;
     let y = area.y + (area.height - h) / 2;
-    let pop = Rect { x, y, width: w, height: h };
+    let pop = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
     f.render_widget(Clear, pop);
 
     let sql = app.confirm_destructive.as_deref().unwrap_or("");
@@ -723,7 +840,10 @@ fn draw_confirm_destructive(f: &mut Frame, app: &App, area: Rect) {
     let msg = vec![
         Line::from(Span::raw(line)),
         Line::from(""),
-        Line::from(Span::styled(" This will modify or delete data.", theme::DESTRUCTIVE_TEXT)),
+        Line::from(Span::styled(
+            " This will modify or delete data.",
+            theme::DESTRUCTIVE_TEXT,
+        )),
         Line::from(" Press  y  to confirm  ·  n / Esc  to cancel"),
     ];
     f.render_widget(Paragraph::new(msg).wrap(Wrap { trim: false }), inner);
@@ -734,12 +854,23 @@ fn draw_confirm_delete(f: &mut Frame, app: &App, area: Rect) {
     let h = 8.min(area.height);
     let x = area.x + (area.width - w) / 2;
     let y = area.y + (area.height - h) / 2;
-    let pop = Rect { x, y, width: w, height: h };
+    let pop = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
     f.render_widget(Clear, pop);
 
-    let line = app.confirm_delete
+    let line = app
+        .confirm_delete
         .and_then(|i| app.config.connections.get(i))
-        .map(|c| format!(" Delete connection '{}' ({}@{}:{})?", c.name, c.username, c.host, c.port))
+        .map(|c| {
+            format!(
+                " Delete connection '{}' ({}@{}:{})?",
+                c.name, c.username, c.host, c.port
+            )
+        })
         .unwrap_or_else(|| " Delete selected connection?".into());
 
     let b = Block::default()
@@ -753,7 +884,10 @@ fn draw_confirm_delete(f: &mut Frame, app: &App, area: Rect) {
     let msg = vec![
         Line::from(Span::raw(line)),
         Line::from(""),
-        Line::from(Span::styled(" This action cannot be undone.", theme::DESTRUCTIVE_TEXT)),
+        Line::from(Span::styled(
+            " This action cannot be undone.",
+            theme::DESTRUCTIVE_TEXT,
+        )),
         Line::from(" Press  Enter  to confirm  ·  Esc  to cancel"),
     ];
     f.render_widget(Paragraph::new(msg).wrap(Wrap { trim: false }), inner);
@@ -790,8 +924,14 @@ mod tests {
         let joined: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(joined, "jane");
         assert_eq!(spans.len(), 4, "four runs: j | a | n | e");
-        assert!(spans[0].style.fg == Some(Color::Magenta), "char 'j' should be magenta");
-        assert!(spans[2].style.fg == Some(Color::Magenta), "char 'n' should be magenta");
+        assert!(
+            spans[0].style.fg == Some(Color::Magenta),
+            "char 'j' should be magenta"
+        );
+        assert!(
+            spans[2].style.fg == Some(Color::Magenta),
+            "char 'n' should be magenta"
+        );
         assert!(spans[1].style.fg.is_none(), "char 'a' should be plain");
         assert!(spans[3].style.fg.is_none(), "char 'e' should be plain");
     }

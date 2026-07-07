@@ -1,9 +1,9 @@
-mod types;
 mod job;
+mod types;
 mod util;
 
-pub use types::*;
 pub use job::{Job, JobResult, spawn_job};
+pub use types::*;
 pub use util::*;
 
 use std::collections::{HashMap, HashSet};
@@ -12,17 +12,20 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::{backend::CrosstermBackend, Terminal};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
+};
 use ratatui::layout::Rect;
+use ratatui::{Terminal, backend::CrosstermBackend};
 
+use crate::autocomplete;
 use crate::config::{Config, Features};
 use crate::db::{self, Connection, Database};
-use crate::autocomplete;
 use crate::editor::Editor;
-use crate::ui;
-use crate::shortcuts::{self, Action, View};
 use crate::filter::CellMatches;
+use crate::shortcuts::{self, Action, View};
+use crate::ui;
 
 type Term = Terminal<CrosstermBackend<Stdout>>;
 
@@ -183,7 +186,9 @@ impl App {
         let db = db.boxed_clone();
         let readable_binary = self.config.features.readable_binary;
         if self.history.last().map(String::as_str) != Some(sql.as_str()) {
-            if self.history.len() >= 100 { self.history.remove(0); }
+            if self.history.len() >= 100 {
+                self.history.remove(0);
+            }
             self.history.push(sql.clone());
         }
         self.history_cursor = None;
@@ -301,7 +306,8 @@ impl App {
                                 return;
                             }
                             if pk_vals.len() != pk_cols.len() {
-                                self.status = "Cannot edit: primary key columns not in result set.".into();
+                                self.status =
+                                    "Cannot edit: primary key columns not in result set.".into();
                                 return;
                             }
                             self.edit_cell = Some(EditCellState {
@@ -328,12 +334,10 @@ impl App {
                 Ok(er) => {
                     if let Some((row, col, new_val)) = self.pending_cell_update.take()
                         && let Output::Table { rows, .. } = &mut self.output
+                        && let Some(r) = rows.get_mut(row)
+                        && let Some(c) = r.get_mut(col)
                     {
-                        if let Some(r) = rows.get_mut(row)
-                            && let Some(c) = r.get_mut(col)
-                        {
-                            *c = new_val;
-                        }
+                        *c = new_val;
                     }
                     self.status = format!("Cell updated ({} rows affected).", er.rows_affected);
                 }
@@ -378,17 +382,34 @@ impl App {
                     Focus::Schema => Focus::Connections,
                 };
             }
-            FocusConnections => { self.autocomplete = None; self.focus = Focus::Connections; }
-            FocusEditor => { self.autocomplete = None; self.focus = Focus::Editor; }
-            FocusResults => { self.autocomplete = None; self.focus = Focus::Results; }
-            FocusSchema => { self.autocomplete = None; self.focus = Focus::Schema; }
+            FocusConnections => {
+                self.autocomplete = None;
+                self.focus = Focus::Connections;
+            }
+            FocusEditor => {
+                self.autocomplete = None;
+                self.focus = Focus::Editor;
+            }
+            FocusResults => {
+                self.autocomplete = None;
+                self.focus = Focus::Results;
+            }
+            FocusSchema => {
+                self.autocomplete = None;
+                self.focus = Focus::Schema;
+            }
             ToggleKeyLog => self.debug_keys = !self.debug_keys,
-            ToggleFeatures => { self.features_open = true; self.feature_cursor = 0; }
+            ToggleFeatures => {
+                self.features_open = true;
+                self.feature_cursor = 0;
+            }
 
             MoveDown => match view {
                 View::Connections => {
                     let n = self.config.connections.len();
-                    if n > 0 && self.conn_cursor + 1 < n { self.conn_cursor += 1; }
+                    if n > 0 && self.conn_cursor + 1 < n {
+                        self.conn_cursor += 1;
+                    }
                 }
                 View::Results => {
                     let last = match self.result_dims() {
@@ -413,7 +434,9 @@ impl App {
             MoveUp => match view {
                 View::Connections => {
                     let n = self.config.connections.len();
-                    if n > 0 && self.conn_cursor > 0 { self.conn_cursor -= 1; }
+                    if n > 0 && self.conn_cursor > 0 {
+                        self.conn_cursor -= 1;
+                    }
                 }
                 View::Results => {
                     let last = match self.result_dims() {
@@ -462,15 +485,16 @@ impl App {
 
             Deselect => self.result_cursor_row = None,
 
-            ToggleFilter => {
-                match (&self.result_filter, self.filter_input_open) {
-                    (None, _) => self.set_filter_query(""),
-                    (Some(_), false) => self.filter_input_open = true,
-                    (Some(_), true) => self.clear_filter(),
-                }
-            }
+            ToggleFilter => match (&self.result_filter, self.filter_input_open) {
+                (None, _) => self.set_filter_query(""),
+                (Some(_), false) => self.filter_input_open = true,
+                (Some(_), true) => self.clear_filter(),
+            },
             FilterAccept => {
-                let empty = self.result_filter.as_ref().is_none_or(|f| f.query.is_empty());
+                let empty = self
+                    .result_filter
+                    .as_ref()
+                    .is_none_or(|f| f.query.is_empty());
                 if empty {
                     self.clear_filter();
                 } else {
@@ -491,10 +515,23 @@ impl App {
             ConnectSelected => self.connect_selected(),
             NewConnection => self.form = Some(FormState::new()),
             DeleteConnection => self.confirm_delete_selected(),
-            EditorNewline => { self.exit_history_browse(); self.editor.newline(); }
-            EditorBackspace => { self.exit_history_browse(); self.editor.backspace(); self.refresh_autocomplete(); }
-            EditorLeft => { self.editor.left(); self.refresh_autocomplete(); }
-            EditorRight => { self.editor.right(); self.refresh_autocomplete(); }
+            EditorNewline => {
+                self.exit_history_browse();
+                self.editor.newline();
+            }
+            EditorBackspace => {
+                self.exit_history_browse();
+                self.editor.backspace();
+                self.refresh_autocomplete();
+            }
+            EditorLeft => {
+                self.editor.left();
+                self.refresh_autocomplete();
+            }
+            EditorRight => {
+                self.editor.right();
+                self.refresh_autocomplete();
+            }
             EditorUp => self.editor.up(),
             EditorDown => self.editor.down(),
             EditorHome => self.editor.home(),
@@ -582,7 +619,9 @@ impl App {
     fn handle_text_input(&mut self, view: View, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if let KeyCode::Char(c) = key.code {
-            if ctrl { return; }
+            if ctrl {
+                return;
+            }
             match view {
                 View::Editor | View::EditorAutocomplete => {
                     self.exit_history_browse();
@@ -628,7 +667,9 @@ impl App {
     }
 
     fn scroll_cursor_row_into_view(&mut self) {
-        let Some(cur) = self.result_cursor_row else { return; };
+        let Some(cur) = self.result_cursor_row else {
+            return;
+        };
         let vh = self.results_body_h.max(1);
         if cur < self.result_scroll_row {
             self.result_scroll_row = cur;
@@ -661,7 +702,11 @@ impl App {
         };
         let matched: Vec<usize> = pairs.iter().map(|(i, _)| *i).collect();
         let offsets: HashMap<usize, CellMatches> = pairs.into_iter().collect();
-        self.result_filter = Some(ResultFilter { query: query.to_string(), matched, offsets });
+        self.result_filter = Some(ResultFilter {
+            query: query.to_string(),
+            matched,
+            offsets,
+        });
         self.filter_input_open = true;
         self.result_cursor_row = None;
         self.result_scroll_row = 0;
@@ -708,7 +753,9 @@ impl App {
 
     fn schema_expand_or_run(&mut self) {
         match self.schema_entry_at_cursor() {
-            Some(SchemaEntry::Table(t)) => { self.schema_expanded.insert(t); }
+            Some(SchemaEntry::Table(t)) => {
+                self.schema_expanded.insert(t);
+            }
             Some(SchemaEntry::Leaf { table, opt }) => {
                 let sql = schema_query(&table, opt);
                 self.editor = Editor::from_text(sql);
@@ -727,10 +774,16 @@ impl App {
     }
 
     fn form_field_next(&mut self, dir: i32) {
-        let Some(form) = self.form.as_mut() else { return; };
+        let Some(form) = self.form.as_mut() else {
+            return;
+        };
         let last = FormState::LABELS.len() - 1;
         form.active = if dir > 0 {
-            if form.active == last { 0 } else { form.active + 1 }
+            if form.active == last {
+                0
+            } else {
+                form.active + 1
+            }
         } else if form.active == 0 {
             last
         } else {
@@ -750,10 +803,14 @@ impl App {
         }
     }
     fn form_field_home(&mut self) {
-        if let Some(f) = self.form.as_mut() { f.cursor = 0; }
+        if let Some(f) = self.form.as_mut() {
+            f.cursor = 0;
+        }
     }
     fn form_field_end(&mut self) {
-        if let Some(f) = self.form.as_mut() { f.cursor = f.fields[f.active].len(); }
+        if let Some(f) = self.form.as_mut() {
+            f.cursor = f.fields[f.active].len();
+        }
     }
     fn form_field_backspace(&mut self) {
         if let Some(f) = self.form.as_mut()
@@ -767,7 +824,11 @@ impl App {
     fn features_move(&mut self, dir: i32) {
         let last = Features::LIST.len().saturating_sub(1);
         self.feature_cursor = if dir > 0 {
-            if self.feature_cursor >= last { 0 } else { self.feature_cursor + 1 }
+            if self.feature_cursor >= last {
+                0
+            } else {
+                self.feature_cursor + 1
+            }
         } else if self.feature_cursor == 0 {
             last
         } else {
@@ -802,7 +863,10 @@ impl App {
             self.status = "No result table to edit.".into();
             return;
         };
-        let cell_value = match rows.get(abs_row).and_then(|r| r.get(self.result_cursor_col)) {
+        let cell_value = match rows
+            .get(abs_row)
+            .and_then(|r| r.get(self.result_cursor_col))
+        {
             Some(v) => v.clone(),
             None => {
                 self.status = "Invalid cell.".into();
@@ -879,7 +943,9 @@ impl App {
             }
             return;
         }
-        let Some(i) = self.history_cursor else { return; };
+        let Some(i) = self.history_cursor else {
+            return;
+        };
         if older {
             if i == 0 {
                 return;
@@ -922,14 +988,27 @@ impl App {
         match &mut self.autocomplete {
             Some(ac) => {
                 ac.items = items;
-                if ac.cursor >= ac.items.len() { ac.cursor = 0; }
+                if ac.cursor >= ac.items.len() {
+                    ac.cursor = 0;
+                }
                 ac.trigger_len = trigger_len;
             }
-            None => self.autocomplete = Some(Autocomplete { items, cursor: 0, trigger_len }),
+            None => {
+                self.autocomplete = Some(Autocomplete {
+                    items,
+                    cursor: 0,
+                    trigger_len,
+                })
+            }
         }
     }
 
-    fn completion_pools(&self, dot: bool, word_start: usize, line_up_to_col: &str) -> (Vec<String>, Vec<String>) {
+    fn completion_pools(
+        &self,
+        dot: bool,
+        word_start: usize,
+        line_up_to_col: &str,
+    ) -> (Vec<String>, Vec<String>) {
         if self.schema.is_empty() {
             return (Vec::new(), Vec::new());
         }
@@ -947,7 +1026,9 @@ impl App {
         for t in referenced {
             if let Some(cols) = self.schema.get(&t) {
                 for c in cols {
-                    if seen.insert(c.clone()) { columns.push(c.clone()); }
+                    if seen.insert(c.clone()) {
+                        columns.push(c.clone());
+                    }
                 }
             }
         }
@@ -974,7 +1055,9 @@ impl App {
         let col = self.editor.col.min(line.len());
         let mut start = 0;
         for (i, ch) in line.char_indices() {
-            if i >= col { break; }
+            if i >= col {
+                break;
+            }
             if !(ch.is_alphanumeric() || ch == '_') {
                 start = i + ch.len_utf8();
             }
@@ -983,8 +1066,12 @@ impl App {
     }
 
     fn accept_completion(&mut self) {
-        let Some(ac) = self.autocomplete.take() else { return; };
-        if ac.items.is_empty() { return; }
+        let Some(ac) = self.autocomplete.take() else {
+            return;
+        };
+        if ac.items.is_empty() {
+            return;
+        }
         let cand = ac.items[ac.cursor % ac.items.len()].clone();
         let line = &mut self.editor.lines[self.editor.row];
         let start = self.editor.col.saturating_sub(ac.trigger_len);
@@ -995,7 +1082,9 @@ impl App {
 
     fn move_completion(&mut self, dir: i32) {
         if let Some(ac) = &mut self.autocomplete {
-            if ac.items.is_empty() { return; }
+            if ac.items.is_empty() {
+                return;
+            }
             let n = ac.items.len() as i32;
             ac.cursor = ((ac.cursor as i32 + dir).rem_euclid(n)) as usize;
         }
@@ -1024,8 +1113,16 @@ impl App {
         for t in tables {
             rows.push(SchemaEntry::Table(t.clone()));
             if self.schema_expanded.contains(t) {
-                for opt in [SchemaOpt::Rows, SchemaOpt::Columns, SchemaOpt::Constraints, SchemaOpt::Indexes] {
-                    rows.push(SchemaEntry::Leaf { table: t.clone(), opt });
+                for opt in [
+                    SchemaOpt::Rows,
+                    SchemaOpt::Columns,
+                    SchemaOpt::Constraints,
+                    SchemaOpt::Indexes,
+                ] {
+                    rows.push(SchemaEntry::Leaf {
+                        table: t.clone(),
+                        opt,
+                    });
                 }
             }
         }
@@ -1045,7 +1142,11 @@ impl App {
     }
 
     fn schema_cursor_to_table(&mut self, t: &str) {
-        if let Some(i) = self.schema_rows().iter().position(|e| matches!(e, SchemaEntry::Table(name) if name == t)) {
+        if let Some(i) = self
+            .schema_rows()
+            .iter()
+            .position(|e| matches!(e, SchemaEntry::Table(name) if name == t))
+        {
             self.schema_cursor = i;
         }
     }
@@ -1054,8 +1155,14 @@ impl App {
         if self.form.is_some() || self.features_open {
             return;
         }
-        let Some(rect) = self.results_rect else { return };
-        if !(m.column >= rect.x && m.column < rect.right() && m.row >= rect.y && m.row < rect.bottom()) {
+        let Some(rect) = self.results_rect else {
+            return;
+        };
+        if !(m.column >= rect.x
+            && m.column < rect.right()
+            && m.row >= rect.y
+            && m.row < rect.bottom())
+        {
             return;
         }
         let (nrows, ncol) = match &self.output {
@@ -1070,13 +1177,15 @@ impl App {
         let last_col = ncol.saturating_sub(1);
         match m.kind {
             MouseEventKind::ScrollDown => {
-                self.result_scroll_row = self.result_scroll_row.saturating_add(1).min(max_scroll_row);
+                self.result_scroll_row =
+                    self.result_scroll_row.saturating_add(1).min(max_scroll_row);
             }
             MouseEventKind::ScrollUp => {
                 self.result_scroll_row = self.result_scroll_row.saturating_sub(1);
             }
             MouseEventKind::ScrollRight => {
-                self.result_scroll_col = self.result_scroll_col.saturating_add(1).min(max_scroll_col);
+                self.result_scroll_col =
+                    self.result_scroll_col.saturating_add(1).min(max_scroll_col);
             }
             MouseEventKind::ScrollLeft => {
                 self.result_scroll_col = self.result_scroll_col.saturating_sub(1);

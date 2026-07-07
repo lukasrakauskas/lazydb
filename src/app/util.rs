@@ -2,7 +2,12 @@ use crossterm::event::{KeyEvent, KeyModifiers};
 
 use super::types::{ResultsClickGeom, SchemaOpt};
 
-pub fn click_to_cell(geom: &ResultsClickGeom, scroll_row: usize, x: u16, y: u16) -> (Option<usize>, Option<usize>) {
+pub fn click_to_cell(
+    geom: &ResultsClickGeom,
+    scroll_row: usize,
+    x: u16,
+    y: u16,
+) -> (Option<usize>, Option<usize>) {
     let col = geom
         .cols
         .iter()
@@ -57,7 +62,7 @@ fn strip_comments_and_strings(sql: &str) -> String {
             }
         } else if c == '-' && chars.peek() == Some(&'-') {
             chars.next();
-            while let Some(c) = chars.next() {
+            for c in chars.by_ref() {
                 if c == '\n' {
                     break;
                 }
@@ -135,12 +140,10 @@ pub fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
         ("pbcopy", Vec::<&str>::new())
     } else if cfg!(target_os = "windows") {
         ("clip", Vec::<&str>::new())
+    } else if std::path::Path::new("/usr/bin/wl-copy").exists() || which("wl-copy") {
+        ("wl-copy", Vec::<&str>::new())
     } else {
-        if std::path::Path::new("/usr/bin/wl-copy").exists() || which("wl-copy") {
-            ("wl-copy", Vec::<&str>::new())
-        } else {
-            ("xclip", vec!["-selection", "clipboard"])
-        }
+        ("xclip", vec!["-selection", "clipboard"])
     };
     let mut child = Command::new(cmd.0)
         .args(&cmd.1)
@@ -169,7 +172,9 @@ fn which(prog: &str) -> bool {
 pub fn row_to_json(columns: &[String], row: &[String]) -> String {
     let mut out = String::from("{");
     for (i, col) in columns.iter().enumerate() {
-        if i > 0 { out.push(','); }
+        if i > 0 {
+            out.push(',');
+        }
         out.push_str(&json_escape(col));
         out.push(':');
         let val = row.get(i).map(String::as_str).unwrap_or("");
@@ -201,7 +206,9 @@ pub fn result_to_csv(columns: &[String], rows: &[Vec<String>]) -> String {
     let mut out = String::new();
     let mut line = String::new();
     for (i, c) in columns.iter().enumerate() {
-        if i > 0 { line.push(','); }
+        if i > 0 {
+            line.push(',');
+        }
         line.push_str(&csv_escape(c));
     }
     out.push_str(&line);
@@ -209,7 +216,9 @@ pub fn result_to_csv(columns: &[String], rows: &[Vec<String>]) -> String {
     for row in rows {
         line.clear();
         for i in 0..columns.len() {
-            if i > 0 { line.push(','); }
+            if i > 0 {
+                line.push(',');
+            }
             let v = row.get(i).map(String::as_str).unwrap_or("");
             line.push_str(&csv_escape(v));
         }
@@ -227,7 +236,11 @@ fn csv_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {
-        if c == '"' { out.push_str("\"\""); } else { out.push(c); }
+        if c == '"' {
+            out.push_str("\"\"");
+        } else {
+            out.push(c);
+        }
     }
     out.push('"');
     out
@@ -253,7 +266,16 @@ pub fn format_key_event(key: &KeyEvent) -> String {
     .map(|(m, s)| if key.modifiers.contains(*m) { *s } else { "-" })
     .collect::<Vec<_>>()
     .join("");
-    format!("key={:?} mods={}{}", key.code, mods, if key.kind == crossterm::event::KeyEventKind::Release { " rel" } else { "" })
+    format!(
+        "key={:?} mods={}{}",
+        key.code,
+        mods,
+        if key.kind == crossterm::event::KeyEventKind::Release {
+            " rel"
+        } else {
+            ""
+        }
+    )
 }
 
 #[cfg(test)]

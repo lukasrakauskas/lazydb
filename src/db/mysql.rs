@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use anyhow::Result;
 use mysql::{Opts, Pool, Value, prelude::*};
+use std::collections::HashMap;
 
 use super::{Connection, Database, ExecutionResult};
 
@@ -53,8 +53,12 @@ impl Database for Mysql {
                 continue;
             }
             let mut result = conn.query_iter(part)?;
-            let set_cols: Vec<String> =
-                result.columns().as_ref().iter().map(|c| c.name_str().to_string()).collect();
+            let set_cols: Vec<String> = result
+                .columns()
+                .as_ref()
+                .iter()
+                .map(|c| c.name_str().to_string())
+                .collect();
 
             if set_cols.is_empty() {
                 for _ in result.by_ref() {}
@@ -95,7 +99,9 @@ impl Database for Mysql {
     }
 
     fn boxed_clone(&self) -> Box<dyn Database> {
-        Box::new(Self { pool: self.pool.clone() })
+        Box::new(Self {
+            pool: self.pool.clone(),
+        })
     }
 }
 
@@ -112,7 +118,10 @@ fn value_to_string(v: Value, readable_binary: bool) -> String {
             format!("{y}-{m:02}-{d:02} {h:02}:{mi:02}:{s:02}.{us:06}")
         }
         Time(neg, d, h, mi, s, us) => {
-            format!("{}{d}d {h:02}:{mi:02}:{s:02}.{us:06}", if neg { "-" } else { "" })
+            format!(
+                "{}{d}d {h:02}:{mi:02}:{s:02}.{us:06}",
+                if neg { "-" } else { "" }
+            )
         }
     }
 }
@@ -151,7 +160,26 @@ fn bytes_to_string(b: &[u8], readable_binary: bool) -> String {
 /// column metadata, or add a per-connection swap toggle.
 fn bin_to_uuid(b: &[u8]) -> String {
     let h: String = b.iter().map(|x| format!("{:02x}", x)).collect();
-    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+    format!(
+        "{}-{}-{}-{}-{}",
+        &h[0..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..32]
+    )
+}
+
+fn pct(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -167,7 +195,10 @@ mod tests {
     #[test]
     fn bytes_invalid_utf8_becomes_hex() {
         // 0xff is never valid UTF-8.
-        assert_eq!(bytes_to_string(&[0xff, 0x00, 0xde, 0xad], true), "0xff00dead");
+        assert_eq!(
+            bytes_to_string(&[0xff, 0x00, 0xde, 0xad], true),
+            "0xff00dead"
+        );
     }
 
     #[test]
@@ -192,24 +223,12 @@ mod tests {
     fn bytes_uuid_matches_known_value() {
         // The canonical "all-zeros except version/variant" UUID.
         let bin: [u8; 16] = [
-            0x01, 0xb4, 0xe9, 0x2f, 0x37, 0x14, 0x43, 0x52,
-            0x86, 0x37, 0xc8, 0x4e, 0xa7, 0x0a, 0x9b, 0x12,
+            0x01, 0xb4, 0xe9, 0x2f, 0x37, 0x14, 0x43, 0x52, 0x86, 0x37, 0xc8, 0x4e, 0xa7, 0x0a,
+            0x9b, 0x12,
         ];
         assert_eq!(
             bytes_to_string(&bin, true),
             "01b4e92f-3714-4352-8637-c84ea70a9b12",
         );
     }
-}
-
-fn pct(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for &b in s.as_bytes() {
-        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("%{:02X}", b));
-        }
-    }
-    out
 }

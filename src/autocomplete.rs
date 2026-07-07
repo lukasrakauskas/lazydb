@@ -3,23 +3,105 @@
 // (dot vs general position) is decided by the caller, which passes the right
 // pools; this module just merges + prefix-filters.
 
-use crate::highlight::{is_keyword, KEYWORDS};
+use crate::highlight::{KEYWORDS, is_keyword};
 
 /// Extra function names offered as completions (conventionally called with `(`).
 const FUNCTIONS: &[&str] = &[
-    "COUNT", "SUM", "AVG", "MIN", "MAX", "CONCAT", "CONCAT_WS", "COALESCE", "IFNULL",
-    "NULLIF", "LENGTH", "CHAR_LENGTH", "CHARACTER_LENGTH", "SUBSTRING", "SUBSTR",
-    "TRIM", "LTRIM", "RTRIM", "LOWER", "LCASE", "UPPER", "UCASE", "REPLACE", "INSERT",
-    "LEFT", "RIGHT", "MID", "LPAD", "RPAD", "REPEAT", "REVERSE", "SPACE", "FIELD",
-    "ROUND", "CEIL", "CEILING", "FLOOR", "ABS", "SIGN", "POW", "POWER", "SQRT", "MOD",
-    "RAND", "GREATEST", "LEAST", "NOW", "SYSDATE", "CURDATE", "CURRENT_DATE",
-    "CURTIME", "CURRENT_TIME", "UTC_TIMESTAMP", "UTC_DATE", "UTC_TIME", "DATE", "TIME",
-    "YEAR", "MONTH", "MONTHNAME", "DAY", "DAYNAME", "DAYOFWEEK", "DAYOFMONTH",
-    "DAYOFYEAR", "HOUR", "MINUTE", "SECOND", "MICROSECOND", "QUARTER", "WEEK",
-    "DATE_FORMAT", "STR_TO_DATE", "DATE_ADD", "DATE_SUB", "DATEDIFF", "TIMEDIFF",
-    "UNIX_TIMESTAMP", "FROM_UNIXTIME", "IF", "CASE", "CAST", "CONVERT", "VERSION",
-    "DATABASE", "SCHEMA", "USER", "CURRENT_USER", "CONNECTION_ID", "LAST_INSERT_ID",
-    "ROW_NUMBER", "RANK", "DENSE_RANK", "FOUND_ROWS", "ROW_COUNT",
+    "COUNT",
+    "SUM",
+    "AVG",
+    "MIN",
+    "MAX",
+    "CONCAT",
+    "CONCAT_WS",
+    "COALESCE",
+    "IFNULL",
+    "NULLIF",
+    "LENGTH",
+    "CHAR_LENGTH",
+    "CHARACTER_LENGTH",
+    "SUBSTRING",
+    "SUBSTR",
+    "TRIM",
+    "LTRIM",
+    "RTRIM",
+    "LOWER",
+    "LCASE",
+    "UPPER",
+    "UCASE",
+    "REPLACE",
+    "INSERT",
+    "LEFT",
+    "RIGHT",
+    "MID",
+    "LPAD",
+    "RPAD",
+    "REPEAT",
+    "REVERSE",
+    "SPACE",
+    "FIELD",
+    "ROUND",
+    "CEIL",
+    "CEILING",
+    "FLOOR",
+    "ABS",
+    "SIGN",
+    "POW",
+    "POWER",
+    "SQRT",
+    "MOD",
+    "RAND",
+    "GREATEST",
+    "LEAST",
+    "NOW",
+    "SYSDATE",
+    "CURDATE",
+    "CURRENT_DATE",
+    "CURTIME",
+    "CURRENT_TIME",
+    "UTC_TIMESTAMP",
+    "UTC_DATE",
+    "UTC_TIME",
+    "DATE",
+    "TIME",
+    "YEAR",
+    "MONTH",
+    "MONTHNAME",
+    "DAY",
+    "DAYNAME",
+    "DAYOFWEEK",
+    "DAYOFMONTH",
+    "DAYOFYEAR",
+    "HOUR",
+    "MINUTE",
+    "SECOND",
+    "MICROSECOND",
+    "QUARTER",
+    "WEEK",
+    "DATE_FORMAT",
+    "STR_TO_DATE",
+    "DATE_ADD",
+    "DATE_SUB",
+    "DATEDIFF",
+    "TIMEDIFF",
+    "UNIX_TIMESTAMP",
+    "FROM_UNIXTIME",
+    "IF",
+    "CASE",
+    "CAST",
+    "CONVERT",
+    "VERSION",
+    "DATABASE",
+    "SCHEMA",
+    "USER",
+    "CURRENT_USER",
+    "CONNECTION_ID",
+    "LAST_INSERT_ID",
+    "ROW_NUMBER",
+    "RANK",
+    "DENSE_RANK",
+    "FOUND_ROWS",
+    "ROW_COUNT",
 ];
 
 /// Merge keywords + functions + the two schema pools, keep those whose
@@ -43,7 +125,7 @@ pub fn completions(word: &str, tables: &[String], columns: &[String]) -> Vec<Str
     for cand in tables.iter().chain(columns.iter()) {
         push(cand);
     }
-    out.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+    out.sort_by_key(|a| a.to_ascii_lowercase());
     out.dedup();
     out
 }
@@ -69,9 +151,7 @@ pub fn referenced_tables(stmt: &str) -> Vec<String> {
         if c.is_ascii_alphabetic() || c == b'_' {
             // identifier or keyword; dots allowed for schema-qualified names.
             let mut j = i;
-            while j < n
-                && (b[j].is_ascii_alphanumeric() || b[j] == b'_' || b[j] == b'.')
-            {
+            while j < n && (b[j].is_ascii_alphanumeric() || b[j] == b'_' || b[j] == b'.') {
                 j += 1;
             }
             let word = &stmt[i..j];

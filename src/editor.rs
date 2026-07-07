@@ -6,7 +6,11 @@ pub struct Editor {
 
 impl Editor {
     pub fn new() -> Self {
-        Self { lines: vec![String::new()], row: 0, col: 0 }
+        Self {
+            lines: vec![String::new()],
+            row: 0,
+            col: 0,
+        }
     }
 
     pub fn from_text(text: String) -> Self {
@@ -14,7 +18,11 @@ impl Editor {
         if lines.is_empty() {
             lines.push(String::new());
         }
-        Self { lines, row: 0, col: 0 }
+        Self {
+            lines,
+            row: 0,
+            col: 0,
+        }
     }
 
     pub fn text(&self) -> String {
@@ -85,7 +93,6 @@ impl Editor {
         self.col = self.lines[self.row].len();
     }
 }
-
 
 #[cfg(test)]
 mod tests {

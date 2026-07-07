@@ -23,9 +23,10 @@ pub struct Features {
 
 impl Features {
     /// `(name, description)` for each toggle, in modal order.
-    pub const LIST: &'static [(&'static str, &'static str)] = &[
-        ("Readable binary fields", "Render BLOB/binary columns as hex instead of raw bytes"),
-    ];
+    pub const LIST: &'static [(&'static str, &'static str)] = &[(
+        "Readable binary fields",
+        "Render BLOB/binary columns as hex instead of raw bytes",
+    )];
 
     pub fn get(&self, i: usize) -> bool {
         match i {
@@ -35,9 +36,8 @@ impl Features {
     }
 
     pub fn set(&mut self, i: usize, v: bool) {
-        match i {
-            0 => self.readable_binary = v,
-            _ => {}
+        if i == 0 {
+            self.readable_binary = v
         }
     }
 }
@@ -49,7 +49,9 @@ fn path() -> Result<PathBuf> {
 
 impl Config {
     pub fn load() -> Self {
-        let Ok(p) = path() else { return Self::default() };
+        let Ok(p) = path() else {
+            return Self::default();
+        };
         fs::read_to_string(&p)
             .ok()
             .and_then(|s| toml::from_str(&s).ok())
@@ -65,7 +67,6 @@ impl Config {
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -83,7 +84,9 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("lazydb-home-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let old = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", &tmp); }
+        unsafe {
+            std::env::set_var("HOME", &tmp);
+        }
 
         let cfg = Config {
             connections: vec![Connection {
@@ -95,15 +98,21 @@ mod tests {
                 password: "p@ss".into(),
                 database: "test".into(),
             }],
-            features: Features { readable_binary: true },
+            features: Features {
+                readable_binary: true,
+            },
         };
         cfg.save().unwrap();
         let loaded = Config::load();
 
         if let Some(o) = old {
-            unsafe { std::env::set_var("HOME", o); }
+            unsafe {
+                std::env::set_var("HOME", o);
+            }
         } else {
-            unsafe { std::env::remove_var("HOME"); }
+            unsafe {
+                std::env::remove_var("HOME");
+            }
         }
         std::fs::remove_dir_all(&tmp).ok();
 
@@ -111,7 +120,7 @@ mod tests {
         assert_eq!(loaded.connections[0].name, "local");
         assert_eq!(loaded.connections[0].password, "p@ss");
         assert_eq!(loaded.connections[0].port, 3306);
-        assert_eq!(loaded.features.readable_binary, true);
+        assert!(loaded.features.readable_binary);
     }
 
     // ponytail: old config files written before the `[features]` table existed
@@ -122,15 +131,25 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("lazydb-home-nf-{}", std::process::id()));
         std::fs::create_dir_all(tmp.join(".config/lazydb")).unwrap();
         let old = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", &tmp); }
+        unsafe {
+            std::env::set_var("HOME", &tmp);
+        }
         std::fs::write(
             tmp.join(".config/lazydb/connections.toml"),
             "connections = []\n",
-        ).unwrap();
+        )
+        .unwrap();
         let loaded = Config::load();
-        if let Some(o) = old { unsafe { std::env::set_var("HOME", o); } }
-        else { unsafe { std::env::remove_var("HOME"); } }
+        if let Some(o) = old {
+            unsafe {
+                std::env::set_var("HOME", o);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
         std::fs::remove_dir_all(&tmp).ok();
-        assert_eq!(loaded.features.readable_binary, false);
+        assert!(!loaded.features.readable_binary);
     }
 }

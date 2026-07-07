@@ -29,10 +29,7 @@ pub type CellMatches = Vec<(usize, Vec<usize>)>;
 /// ascending (the matcher returns them reversed, we flip them). A row appears
 /// if ANY of its cells matched; the row's score is its best cell's score.
 /// Empty query → every row with an empty `matched_cells` (nothing to highlight).
-pub fn fuzzy_filter_indices(
-    query: &str,
-    rows: &[Vec<String>],
-) -> Vec<(usize, CellMatches)> {
+pub fn fuzzy_filter_indices(query: &str, rows: &[Vec<String>]) -> Vec<(usize, CellMatches)> {
     if query.is_empty() {
         return (0..rows.len()).map(|i| (i, Vec::new())).collect();
     }
@@ -99,7 +96,10 @@ mod tests {
     fn substring_match_in_any_single_cell() {
         // "eng" matches "engineer" in column 2 of rows 0 and 2.
         let idx = idx_of(fuzzy_filter_indices("eng", &rows()));
-        assert!(idx.contains(&0) && idx.contains(&2), "engineer rows must match: {idx:?}");
+        assert!(
+            idx.contains(&0) && idx.contains(&2),
+            "engineer rows must match: {idx:?}"
+        );
     }
 
     #[test]
@@ -117,10 +117,16 @@ mod tests {
         // 0 typos = subsequence match: "jne" matches "jane smith" (row 1) by
         // skipping the 'a' and the space — within the single name cell.
         let idx = idx_of(fuzzy_filter_indices("jne", &rows()));
-        assert!(idx.contains(&1), "subsequence 'jne' should match 'jane smith': {idx:?}");
+        assert!(
+            idx.contains(&1),
+            "subsequence 'jne' should match 'jane smith': {idx:?}"
+        );
         // an exact typo ("jahn" for "john") does NOT match at 0 typos.
         let typo = idx_of(fuzzy_filter_indices("jahn", &rows()));
-        assert!(!typo.contains(&0), "typo should not match at 0 typos: {typo:?}");
+        assert!(
+            !typo.contains(&0),
+            "typo should not match at 0 typos: {typo:?}"
+        );
     }
 
     #[test]
@@ -140,7 +146,10 @@ mod tests {
         );
         // "2j" — '2' in id, 'j' in "jane smith" — also rejected.
         let idx2 = idx_of(fuzzy_filter_indices("2j", &rows()));
-        assert!(!idx2.contains(&1), "cross-cell '2j' must be rejected: {idx2:?}");
+        assert!(
+            !idx2.contains(&1),
+            "cross-cell '2j' must be rejected: {idx2:?}"
+        );
     }
 
     #[test]
@@ -156,8 +165,8 @@ mod tests {
     fn ragged_rows_dont_break_index_mapping() {
         // A ragged row (fewer cells) must not shift the next row's cell lookup.
         let rag = vec![
-            vec!["x".into()],                       // row 0: 1 cell
-            vec!["y".into(), "jane".into()],        // row 1: 2 cells
+            vec!["x".into()],                // row 0: 1 cell
+            vec!["y".into(), "jane".into()], // row 1: 2 cells
         ];
         let m = fuzzy_filter_indices("jn", &rag);
         // "jn" matches "jane" in row 1, col 1, offsets 0,2.

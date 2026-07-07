@@ -78,10 +78,18 @@ fn schema_rows_expand_to_four_options() {
     let rows = app.schema_rows();
     assert_eq!(rows.len(), 6);
     assert!(matches!(rows[1], super::SchemaEntry::Table(ref t) if t == "users"));
-    assert!(matches!(rows[2], super::SchemaEntry::Leaf { ref table, opt: super::SchemaOpt::Rows } if table == "users"));
-    assert!(matches!(rows[3], super::SchemaEntry::Leaf { ref table, opt: super::SchemaOpt::Columns } if table == "users"));
-    assert!(matches!(rows[4], super::SchemaEntry::Leaf { ref table, opt: super::SchemaOpt::Constraints } if table == "users"));
-    assert!(matches!(rows[5], super::SchemaEntry::Leaf { ref table, opt: super::SchemaOpt::Indexes } if table == "users"));
+    assert!(
+        matches!(rows[2], super::SchemaEntry::Leaf { ref table, opt: super::SchemaOpt::Rows } if table == "users")
+    );
+    assert!(
+        matches!(rows[3], super::SchemaEntry::Leaf { ref table, opt: super::SchemaOpt::Columns } if table == "users")
+    );
+    assert!(
+        matches!(rows[4], super::SchemaEntry::Leaf { ref table, opt: super::SchemaOpt::Constraints } if table == "users")
+    );
+    assert!(
+        matches!(rows[5], super::SchemaEntry::Leaf { ref table, opt: super::SchemaOpt::Indexes } if table == "users")
+    );
 
     app.schema_expanded.remove("users");
     assert_eq!(app.schema_rows().len(), 2);
@@ -89,10 +97,19 @@ fn schema_rows_expand_to_four_options() {
 
 #[test]
 fn schema_query_generates_correct_sql() {
-    use super::{schema_query, SchemaOpt};
-    assert_eq!(schema_query("users", SchemaOpt::Rows), "SELECT * FROM `users` LIMIT 100;");
-    assert_eq!(schema_query("users", SchemaOpt::Columns), "SHOW FULL COLUMNS FROM `users`;");
-    assert_eq!(schema_query("users", SchemaOpt::Indexes), "SHOW INDEX FROM `users`;");
+    use super::{SchemaOpt, schema_query};
+    assert_eq!(
+        schema_query("users", SchemaOpt::Rows),
+        "SELECT * FROM `users` LIMIT 100;"
+    );
+    assert_eq!(
+        schema_query("users", SchemaOpt::Columns),
+        "SHOW FULL COLUMNS FROM `users`;"
+    );
+    assert_eq!(
+        schema_query("users", SchemaOpt::Indexes),
+        "SHOW INDEX FROM `users`;"
+    );
     let c = schema_query("users", SchemaOpt::Constraints);
     assert!(c.contains("TABLE_CONSTRAINTS"));
     assert!(c.contains("TABLE_NAME = 'users'"));
@@ -107,26 +124,37 @@ fn row_to_json_escapes_and_pairs() {
         "{\"id\":\"42\",\"name\":\"a\\\"b\\\\c\"}"
     );
     let short = vec!["1".to_string()];
-    assert_eq!(super::row_to_json(&cols, &short), "{\"id\":\"1\",\"name\":\"\"}");
+    assert_eq!(
+        super::row_to_json(&cols, &short),
+        "{\"id\":\"1\",\"name\":\"\"}"
+    );
 }
 
 #[test]
 fn csv_escapes_special_fields() {
     let cols = vec!["a".to_string(), "b".to_string()];
-    let rows = vec![vec!["1".to_string(), "x,y".to_string()], vec!["2".to_string(), "he said \"hi\"".to_string()]];
+    let rows = vec![
+        vec!["1".to_string(), "x,y".to_string()],
+        vec!["2".to_string(), "he said \"hi\"".to_string()],
+    ];
     let csv = super::result_to_csv(&cols, &rows);
     assert_eq!(csv, "a,b\n1,\"x,y\"\n2,\"he said \"\"hi\"\"\"\n");
 }
 
 use super::{App, Focus, Output};
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
+};
 
 fn results_app(nrows: usize, ncols: usize, body_h: usize, vis_cols: usize) -> App {
     let mut app = App::load().unwrap();
     app.focus = Focus::Results;
     app.output = Output::Table {
         columns: (0..ncols).map(|c| format!("c{c}")).collect(),
-        rows: (0..nrows).map(|r| (0..ncols).map(|c| format!("{r}.{c}")).collect()).collect(),
+        rows: (0..nrows)
+            .map(|r| (0..ncols).map(|c| format!("{r}.{c}")).collect())
+            .collect(),
         rows_affected: nrows as u64,
         elapsed_ms: 0,
     };
@@ -137,35 +165,58 @@ fn results_app(nrows: usize, ncols: usize, body_h: usize, vis_cols: usize) -> Ap
 
 fn press(app: &mut App, code: KeyCode) {
     app.handle_key(KeyEvent::new_with_kind_and_state(
-        code, KeyModifiers::NONE, KeyEventKind::Press, KeyEventState::NONE,
+        code,
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
     ));
 }
 
 #[test]
 fn results_cursor_auto_follows_viewport() {
     let mut app = results_app(30, 5, 5, 5);
-    for _ in 0..6 { press(&mut app, KeyCode::Char('j')); }
+    for _ in 0..6 {
+        press(&mut app, KeyCode::Char('j'));
+    }
     assert_eq!(app.result_cursor_row, Some(5));
-    assert_eq!(app.result_scroll_row, 1, "viewport scrolls to keep cursor at bottom");
+    assert_eq!(
+        app.result_scroll_row, 1,
+        "viewport scrolls to keep cursor at bottom"
+    );
     press(&mut app, KeyCode::Char('k'));
     assert_eq!(app.result_cursor_row, Some(4));
-    assert_eq!(app.result_scroll_row, 1, "no scroll up while cursor still visible");
-    for _ in 0..5 { press(&mut app, KeyCode::Char('k')); }
+    assert_eq!(
+        app.result_scroll_row, 1,
+        "no scroll up while cursor still visible"
+    );
+    for _ in 0..5 {
+        press(&mut app, KeyCode::Char('k'));
+    }
     assert_eq!(app.result_cursor_row, Some(0));
-    assert_eq!(app.result_scroll_row, 0, "viewport follows when cursor hits top");
+    assert_eq!(
+        app.result_scroll_row, 0,
+        "viewport follows when cursor hits top"
+    );
 }
 
 #[test]
 fn results_page_scroll_is_independent_of_cursor() {
     let mut app = results_app(30, 5, 5, 5);
-    for _ in 0..4 { press(&mut app, KeyCode::Char('j')); }
+    for _ in 0..4 {
+        press(&mut app, KeyCode::Char('j'));
+    }
     assert_eq!(app.result_cursor_row, Some(3));
     let cursor_before = app.result_cursor_row;
     press(&mut app, KeyCode::PageDown);
-    assert_eq!(app.result_cursor_row, cursor_before, "cursor must not move on PgDn");
+    assert_eq!(
+        app.result_cursor_row, cursor_before,
+        "cursor must not move on PgDn"
+    );
     assert_eq!(app.result_scroll_row, 5, "viewport scrolled one page");
     assert!(app.result_cursor_row.unwrap() < app.result_scroll_row);
-    for _ in 0..10 { press(&mut app, KeyCode::PageDown); }
+    for _ in 0..10 {
+        press(&mut app, KeyCode::PageDown);
+    }
     assert_eq!(app.result_scroll_row, 25);
 }
 
@@ -174,7 +225,10 @@ fn results_home_end_jump_cursor_and_follow() {
     let mut app = results_app(30, 5, 5, 5);
     press(&mut app, KeyCode::End);
     assert_eq!(app.result_cursor_row, Some(29));
-    assert_eq!(app.result_scroll_row, 25, "End scrolls so the last row is at the viewport bottom");
+    assert_eq!(
+        app.result_scroll_row, 25,
+        "End scrolls so the last row is at the viewport bottom"
+    );
     press(&mut app, KeyCode::Home);
     assert_eq!(app.result_cursor_row, Some(0));
     assert_eq!(app.result_scroll_row, 0);
@@ -184,13 +238,20 @@ fn results_home_end_jump_cursor_and_follow() {
 fn results_mouse_wheel_scrolls_viewport_only() {
     let mut app = results_app(30, 5, 5, 5);
     app.results_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 10));
-    for _ in 0..2 { press(&mut app, KeyCode::Char('j')); }
+    for _ in 0..2 {
+        press(&mut app, KeyCode::Char('j'));
+    }
     let cursor_before = app.result_cursor_row;
     app.handle_mouse(MouseEvent {
         kind: MouseEventKind::ScrollDown,
-        column: 5, row: 5, modifiers: KeyModifiers::NONE,
+        column: 5,
+        row: 5,
+        modifiers: KeyModifiers::NONE,
     });
-    assert_eq!(app.result_cursor_row, cursor_before, "wheel never moves the cursor");
+    assert_eq!(
+        app.result_cursor_row, cursor_before,
+        "wheel never moves the cursor"
+    );
     assert_eq!(app.result_scroll_row, 1, "wheel scrolls the viewport");
 }
 
@@ -203,12 +264,16 @@ fn results_copy_uses_cursor_not_scroll() {
     assert_eq!(app.result_cursor_row, Some(0));
     assert!(app.result_scroll_row > 0);
     press(&mut app, KeyCode::Char('y'));
-    assert!(app.status.starts_with("Copied row 1 as JSON"), "got: {}", app.status);
+    assert!(
+        app.status.starts_with("Copied row 1 as JSON"),
+        "got: {}",
+        app.status
+    );
 }
 
 #[test]
 fn click_to_cell_maps_body_and_header() {
-    use super::{click_to_cell, ResultsClickGeom};
+    use super::{ResultsClickGeom, click_to_cell};
     use ratatui::layout::Rect;
     let geom = ResultsClickGeom {
         body: Rect::new(0, 2, 20, 5),
@@ -240,11 +305,16 @@ fn results_click_selects_cell_and_focuses() {
     app.focus = Focus::Editor;
     app.handle_mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
-        column: 9, row: 4, modifiers: KeyModifiers::NONE,
+        column: 9,
+        row: 4,
+        modifiers: KeyModifiers::NONE,
     });
     assert_eq!(app.result_cursor_row, Some(7));
     assert_eq!(app.result_cursor_col, 1);
-    assert!(app.focus == Focus::Results, "click focuses the results pane");
+    assert!(
+        app.focus == Focus::Results,
+        "click focuses the results pane"
+    );
 }
 
 #[test]
@@ -255,10 +325,16 @@ fn results_click_header_selects_column_only() {
     app.result_cursor_row = Some(12);
     app.handle_mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
-        column: 15, row: 1, modifiers: KeyModifiers::NONE,
+        column: 15,
+        row: 1,
+        modifiers: KeyModifiers::NONE,
     });
     assert_eq!(app.result_cursor_col, 2);
-    assert_eq!(app.result_cursor_row, Some(12), "header click must not move the row cursor");
+    assert_eq!(
+        app.result_cursor_row,
+        Some(12),
+        "header click must not move the row cursor"
+    );
 }
 
 #[test]
@@ -269,7 +345,11 @@ fn results_deselect_clears_cursor() {
     press(&mut app, KeyCode::Char('d'));
     assert_eq!(app.result_cursor_row, None);
     press(&mut app, KeyCode::Char('y'));
-    assert!(app.status.contains("No row selected"), "got: {}", app.status);
+    assert!(
+        app.status.contains("No row selected"),
+        "got: {}",
+        app.status
+    );
 }
 
 #[test]
@@ -288,8 +368,10 @@ fn results_filter_narrows_and_ranks_by_score() {
     let mut app = results_app(30, 2, 5, 2);
     app.set_filter_query("5");
     let matched = app.result_filter.as_ref().unwrap().matched.clone();
-    assert!(matched.contains(&5) && matched.contains(&15) && matched.contains(&25),
-        "matched: {matched:?}");
+    assert!(
+        matched.contains(&5) && matched.contains(&15) && matched.contains(&25),
+        "matched: {matched:?}"
+    );
     assert_eq!(app.displayed_count(), matched.len());
     assert_eq!(app.result_cursor_row, None);
 }
@@ -318,15 +400,24 @@ fn results_filter_live_typing_appends_and_refilters() {
     press(&mut app, KeyCode::Char('/'));
     assert!(app.result_filter.is_some(), "/ opens filter mode");
     app.handle_key(KeyEvent::new_with_kind_and_state(
-        KeyCode::Char('1'), KeyModifiers::NONE, KeyEventKind::Press, KeyEventState::NONE,
+        KeyCode::Char('1'),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
     ));
     let after_1 = app.displayed_count();
     app.handle_key(KeyEvent::new_with_kind_and_state(
-        KeyCode::Char('5'), KeyModifiers::NONE, KeyEventKind::Press, KeyEventState::NONE,
+        KeyCode::Char('5'),
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
     ));
     let q = app.result_filter.as_ref().unwrap().query.clone();
     assert_eq!(q, "15");
-    assert!(after_1 >= app.displayed_count(), "narrowing query must not grow the set");
+    assert!(
+        after_1 >= app.displayed_count(),
+        "narrowing query must not grow the set"
+    );
 }
 
 #[test]
@@ -335,7 +426,10 @@ fn results_filter_backspace_edits_query() {
     app.set_filter_query("15");
     assert!(app.filter_input_open);
     app.handle_key(KeyEvent::new_with_kind_and_state(
-        KeyCode::Backspace, KeyModifiers::NONE, KeyEventKind::Press, KeyEventState::NONE,
+        KeyCode::Backspace,
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
     ));
     assert_eq!(app.result_filter.as_ref().unwrap().query, "1");
 }
@@ -350,8 +444,15 @@ fn results_filter_accept_keeps_filter_closes_input() {
     assert_eq!(matched, 3);
     press(&mut app, KeyCode::Enter);
     assert!(!app.filter_input_open, "accept closes the input mode");
-    assert!(app.result_filter.is_some(), "accept keeps the filter applied");
-    assert_eq!(app.displayed_count(), matched, "filtered set unchanged after accept");
+    assert!(
+        app.result_filter.is_some(),
+        "accept keeps the filter applied"
+    );
+    assert_eq!(
+        app.displayed_count(),
+        matched,
+        "filtered set unchanged after accept"
+    );
 }
 
 #[test]
@@ -362,7 +463,10 @@ fn results_filter_reopen_edits_committed_query() {
     assert!(!app.filter_input_open);
     assert!(app.result_filter.is_some());
     press(&mut app, KeyCode::Char('/'));
-    assert!(app.filter_input_open, "/ re-opens the input on a committed filter");
+    assert!(
+        app.filter_input_open,
+        "/ re-opens the input on a committed filter"
+    );
     assert_eq!(app.result_filter.as_ref().unwrap().query, "5");
     press(&mut app, KeyCode::Char('/'));
     assert!(app.result_filter.is_none());
@@ -376,7 +480,10 @@ fn results_filter_backspace_no_op_when_input_closed() {
     press(&mut app, KeyCode::Enter);
     let q_before = app.result_filter.as_ref().unwrap().query.clone();
     app.handle_key(KeyEvent::new_with_kind_and_state(
-        KeyCode::Backspace, KeyModifiers::NONE, KeyEventKind::Press, KeyEventState::NONE,
+        KeyCode::Backspace,
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
     ));
     assert_eq!(app.result_filter.as_ref().unwrap().query, q_before);
 }
@@ -387,7 +494,10 @@ fn results_filter_enter_with_empty_query_cancels() {
     press(&mut app, KeyCode::Char('/'));
     assert!(app.result_filter.is_some());
     press(&mut app, KeyCode::Enter);
-    assert!(app.result_filter.is_none(), "empty accept should cancel the filter");
+    assert!(
+        app.result_filter.is_none(),
+        "empty accept should cancel the filter"
+    );
 }
 
 #[test]

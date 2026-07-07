@@ -30,13 +30,11 @@ pub fn split_statements(sql: &str) -> Vec<String> {
         }
 
         // At a real token position, check for DELIMITER directive.
-        if at_stmt_start {
-            if let Some((new_delim, next_i)) = parse_delimiter(bytes, i) {
-                delimiter = new_delim;
-                i = next_i;
-                start = i; // DELIMITER is a client-side directive; don't emit it
-                continue;
-            }
+        if at_stmt_start && let Some((new_delim, next_i)) = parse_delimiter(bytes, i) {
+            delimiter = new_delim;
+            i = next_i;
+            start = i; // DELIMITER is a client-side directive; don't emit it
+            continue;
         }
 
         // Skip string literals.

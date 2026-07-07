@@ -77,8 +77,7 @@ pub struct FormState {
 }
 
 impl FormState {
-    pub const LABELS: [&'static str; 6] =
-        ["Name", "Host", "Port", "User", "Password", "Database"];
+    pub const LABELS: [&'static str; 6] = ["Name", "Host", "Port", "User", "Password", "Database"];
 
     pub fn new() -> Self {
         Self {
