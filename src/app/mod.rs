@@ -54,6 +54,7 @@ pub struct App {
     pub features_open: bool,
     pub feature_cursor: usize,
     pub confirm_destructive: Option<String>,
+    pub confirm_delete: Option<usize>,
     pub debug_keys: bool,
     pub last_key: Option<String>,
     pub autocomplete: Option<Autocomplete>,
@@ -98,6 +99,7 @@ impl App {
             features_open: false,
             feature_cursor: 0,
             confirm_destructive: None,
+            confirm_delete: None,
             debug_keys: false,
             last_key: None,
             autocomplete: None,
@@ -134,11 +136,19 @@ impl App {
         }
     }
 
-    fn delete_selected(&mut self) {
+    fn confirm_delete_selected(&mut self) {
         if self.config.connections.is_empty() {
             return;
         }
-        self.config.connections.remove(self.conn_cursor);
+        self.confirm_delete = Some(self.conn_cursor);
+        self.status = "Delete connection? Press Enter to confirm, Esc to cancel.".into();
+    }
+
+    fn delete_connection_at(&mut self, idx: usize) {
+        if idx >= self.config.connections.len() {
+            return;
+        }
+        self.config.connections.remove(idx);
         if self.conn_cursor >= self.config.connections.len() && self.conn_cursor > 0 {
             self.conn_cursor -= 1;
         }
@@ -219,8 +229,6 @@ impl App {
             }
             Err(e) => self.status = format!("Save failed: {e}"),
         }
-        self.form = None;
-        self.status = "Saved. Press Enter to connect.".into();
     }
 
     fn apply_job(&mut self, res: JobResult) {
@@ -344,6 +352,7 @@ impl App {
             self.form.is_some(),
             self.features_open,
             self.confirm_destructive.is_some(),
+            self.confirm_delete.is_some(),
             self.autocomplete.is_some(),
             self.filter_input_open,
             self.edit_cell.is_some(),
@@ -481,8 +490,7 @@ impl App {
 
             ConnectSelected => self.connect_selected(),
             NewConnection => self.form = Some(FormState::new()),
-            DeleteConnection => self.delete_selected(),
-
+            DeleteConnection => self.confirm_delete_selected(),
             EditorNewline => { self.exit_history_browse(); self.editor.newline(); }
             EditorBackspace => { self.exit_history_browse(); self.editor.backspace(); self.refresh_autocomplete(); }
             EditorLeft => { self.editor.left(); self.refresh_autocomplete(); }
@@ -523,11 +531,18 @@ impl App {
             ConfirmYes => {
                 if let Some(sql) = self.confirm_destructive.take() {
                     self.execute_sql(sql);
+                } else if let Some(idx) = self.confirm_delete.take() {
+                    self.delete_connection_at(idx);
                 }
             }
             ConfirmNo => {
-                self.confirm_destructive = None;
-                self.status = "Query cancelled.".into();
+                if self.confirm_destructive.is_some() {
+                    self.confirm_destructive = None;
+                    self.status = "Query cancelled.".into();
+                } else if self.confirm_delete.is_some() {
+                    self.confirm_delete = None;
+                    self.status = "Deletion cancelled.".into();
+                }
             }
 
             EditCell => self.start_edit_cell(),

@@ -62,6 +62,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.confirm_destructive.is_some() {
         draw_confirm_destructive(f, app, f.area());
     }
+
+    if app.confirm_delete.is_some() {
+        draw_confirm_delete(f, app, f.area());
+    }
 }
 
 fn block<'a>(title: &'a str, num: &'a str, focused: bool) -> Block<'a> {
@@ -577,6 +581,7 @@ fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
         app.form.is_some(),
         app.features_open,
         app.confirm_destructive.is_some(),
+        app.confirm_delete.is_some(),
         app.autocomplete.is_some(),
         app.filter_input_open,
         app.edit_cell.is_some(),
@@ -720,6 +725,36 @@ fn draw_confirm_destructive(f: &mut Frame, app: &App, area: Rect) {
         Line::from(""),
         Line::from(Span::styled(" This will modify or delete data.", theme::DESTRUCTIVE_TEXT)),
         Line::from(" Press  y  to confirm  ·  n / Esc  to cancel"),
+    ];
+    f.render_widget(Paragraph::new(msg).wrap(Wrap { trim: false }), inner);
+}
+
+fn draw_confirm_delete(f: &mut Frame, app: &App, area: Rect) {
+    let w = 72.min(area.width);
+    let h = 8.min(area.height);
+    let x = area.x + (area.width - w) / 2;
+    let y = area.y + (area.height - h) / 2;
+    let pop = Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, pop);
+
+    let line = app.confirm_delete
+        .and_then(|i| app.config.connections.get(i))
+        .map(|c| format!(" Delete connection '{}' ({}@{}:{})?", c.name, c.username, c.host, c.port))
+        .unwrap_or_else(|| " Delete selected connection?".into());
+
+    let b = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(" Delete Connection ")
+        .border_style(theme::DESTRUCTIVE_BORDER);
+    let inner = b.inner(pop);
+    f.render_widget(b, pop);
+
+    let msg = vec![
+        Line::from(Span::raw(line)),
+        Line::from(""),
+        Line::from(Span::styled(" This action cannot be undone.", theme::DESTRUCTIVE_TEXT)),
+        Line::from(" Press  Enter  to confirm  ·  Esc  to cancel"),
     ];
     f.render_widget(Paragraph::new(msg).wrap(Wrap { trim: false }), inner);
 }

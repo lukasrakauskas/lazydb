@@ -36,9 +36,14 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mut app = app::App::load()?;
     // ponytail: optional `lazydb path/to/script.sql` preloads the editor.
-    if args.len() > 1 {
-        if let Ok(text) = std::fs::read_to_string(&args[1]) {
-            app.load_script(text);
+    if args.len() >= 2 {
+        let path = &args[1];
+        match std::fs::read_to_string(path) {
+            Ok(text) => app.load_script(text),
+            Err(err) => {
+                eprintln!("lazydb: cannot read script '{}': {}", path, err);
+                std::process::exit(1);
+            }
         }
     }
 

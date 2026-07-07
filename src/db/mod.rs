@@ -3,7 +3,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 pub mod mysql;
-
+pub mod sql;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Connection {
     pub name: String,

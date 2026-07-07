@@ -17,15 +17,68 @@ pub fn click_to_cell(geom: &ResultsClickGeom, scroll_row: usize, x: u16, y: u16)
 }
 
 pub fn is_destructive(sql: &str) -> bool {
-    let lower = sql.to_lowercase();
-    let words: Vec<&str> = lower
-        .split(|c: char| !c.is_alphanumeric() && c != '_')
-        .filter(|w| !w.is_empty())
-        .collect();
-    if words.contains(&"drop") || words.contains(&"truncate") {
-        return true;
+    // ponytail: naive ';' split; adopt crate::db::sql::split_statements (P0 item 5) once landed
+    for stmt in sql.split(';') {
+        let stripped = strip_comments_and_strings(stmt);
+        let lower = stripped.to_lowercase();
+        let words: Vec<&str> = lower
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|w| !w.is_empty())
+            .collect();
+        if words.contains(&"drop")
+            || words.contains(&"truncate")
+            || words.contains(&"alter")
+            || words.contains(&"rename")
+        {
+            return true;
+        }
+        if (words.contains(&"delete") || words.contains(&"update")) && !lower.contains("where") {
+            return true;
+        }
     }
-    words.contains(&"delete") && !lower.contains("where")
+    false
+}
+fn strip_comments_and_strings(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\'' {
+            // consume string literal
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    chars.next();
+                } else if c == '\'' {
+                    if chars.peek() == Some(&'\'') {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+            }
+        } else if c == '-' && chars.peek() == Some(&'-') {
+            chars.next();
+            while let Some(c) = chars.next() {
+                if c == '\n' {
+                    break;
+                }
+            }
+        } else if c == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            loop {
+                match chars.next() {
+                    Some('*') if chars.peek() == Some(&'/') => {
+                        chars.next();
+                        break;
+                    }
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 pub fn schema_query(table: &str, opt: SchemaOpt) -> String {
@@ -201,4 +254,34 @@ pub fn format_key_event(key: &KeyEvent) -> String {
     .collect::<Vec<_>>()
     .join("");
     format!("key={:?} mods={}{}", key.code, mods, if key.kind == crossterm::event::KeyEventKind::Release { " rel" } else { "" })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drop_is_destructive() {
+        assert!(is_destructive("DROP TABLE foo;"));
+    }
+
+    #[test]
+    fn update_with_where_is_not_destructive() {
+        assert!(!is_destructive("UPDATE foo SET bar = 1 WHERE id = 2;"));
+    }
+
+    #[test]
+    fn update_without_where_is_destructive() {
+        assert!(is_destructive("UPDATE foo SET bar = 1;"));
+    }
+
+    #[test]
+    fn destructive_later_in_script_is_detected() {
+        assert!(is_destructive("SELECT 1; DROP TABLE foo;"));
+    }
+
+    #[test]
+    fn semicolon_in_string_is_not_false_positive() {
+        assert!(!is_destructive("SELECT ';';"));
+    }
 }

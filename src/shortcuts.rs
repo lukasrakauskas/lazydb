@@ -26,6 +26,7 @@ use crate::app::Focus;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
     ConfirmDestructive,
+    ConfirmDelete,
     Form,
     Features,
     Connections,
@@ -324,6 +325,11 @@ static CONFIRM: &[Binding] = &[
     Binding { keys: &[ch('n', "n"), ch('N', "N"), bare(KeyCode::Esc, "Esc")], label: "cancel", action: Action::ConfirmNo, hidden: false },
 ];
 
+static DELETE_CONFIRM: &[Binding] = &[
+    Binding { keys: &[bare(KeyCode::Enter, "⏎")], label: "confirm", action: Action::ConfirmYes, hidden: false },
+    Binding { keys: &[bare(KeyCode::Esc, "Esc")], label: "cancel", action: Action::ConfirmNo, hidden: false },
+];
+
 fn view_bindings(view: View) -> &'static [Binding] {
     match view {
         View::Connections => CONNECTIONS,
@@ -336,6 +342,7 @@ fn view_bindings(view: View) -> &'static [Binding] {
         View::Form => FORM,
         View::Features => FEATURES,
         View::ConfirmDestructive => CONFIRM,
+        View::ConfirmDelete => DELETE_CONFIRM,
     }
 }
 
@@ -372,13 +379,16 @@ pub fn current_view(
     focus: Focus,
     form: bool,
     features: bool,
-    confirm: bool,
+    confirm_destructive: bool,
+    confirm_delete: bool,
     autocomplete: bool,
     filter_input_open: bool,
     edit_cell: bool,
 ) -> View {
-    if confirm {
+    if confirm_destructive {
         View::ConfirmDestructive
+    } else if confirm_delete {
+        View::ConfirmDelete
     } else if form {
         View::Form
     } else if features {
@@ -419,24 +429,26 @@ mod tests {
     #[test]
     fn current_view_modal_wins_over_focus_and_autocomplete() {
         assert_eq!(
-            current_view(Focus::Editor, true, true, true, true, true, false),
+            current_view(Focus::Editor, true, true, true, false, true, true, false),
             View::ConfirmDestructive
         );
-        assert_eq!(current_view(Focus::Editor, true, false, false, false, false, false), View::Form);
-        assert_eq!(current_view(Focus::Editor, false, true, false, false, false, false), View::Features);
+        assert_eq!(current_view(Focus::Editor, true, false, false, false, false, false, false), View::Form);
+        assert_eq!(current_view(Focus::Editor, false, true, false, false, false, false, false), View::Features);
         assert_eq!(
-            current_view(Focus::Editor, false, false, false, true, false, false),
+            current_view(Focus::Editor, false, false, false, false, true, false, false),
             View::EditorAutocomplete
         );
-        assert_eq!(current_view(Focus::Results, false, false, false, false, false, false), View::Results);
+        assert_eq!(current_view(Focus::Results, false, false, false, false, false, false, false), View::Results);
         // input open → ResultsFilter (typing mode). The "filter applied but
         // input closed" case (after Accept) is just the line above — Results —
         // since current_view only takes the open flag, not whether a filter is applied.
-        assert_eq!(current_view(Focus::Results, false, false, false, false, true, false), View::ResultsFilter);
+        assert_eq!(current_view(Focus::Results, false, false, false, false, false, true, false), View::ResultsFilter);
         // edit_cell → ResultsEdit
-        assert_eq!(current_view(Focus::Results, false, false, false, false, false, true), View::ResultsEdit);
+        assert_eq!(current_view(Focus::Results, false, false, false, false, false, false, true), View::ResultsEdit);
         // edit_cell loses to modals
-        assert_eq!(current_view(Focus::Results, false, false, true, false, false, true), View::ConfirmDestructive);
+        assert_eq!(current_view(Focus::Results, false, false, true, false, false, false, true), View::ConfirmDestructive);
+        // confirm_delete view
+        assert_eq!(current_view(Focus::Results, false, false, false, true, false, false, false), View::ConfirmDelete);
     }
 
     #[test]

@@ -47,9 +47,7 @@ impl Database for Mysql {
         let mut rows: Vec<Vec<String>> = Vec::new();
         let mut rows_affected = 0u64;
 
-        // ponytail: naive split on ';' — breaks on ';' inside string literals or
-        // comments. Fine for typical scripts; swap in a real tokenizer if needed.
-        for part in sql.split(';') {
+        for part in crate::db::sql::split_statements(sql) {
             let part = part.trim();
             if part.is_empty() {
                 continue;
@@ -87,11 +85,12 @@ impl Database for Mysql {
 
     fn primary_keys(&self, table: &str) -> Result<Vec<String>> {
         let mut conn = self.pool.get_conn()?;
-        let rows: Vec<(String,)> = conn.query(format!(
+        let rows: Vec<(String,)> = conn.exec(
             "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE \
              WHERE CONSTRAINT_NAME = 'PRIMARY' AND TABLE_SCHEMA = DATABASE() \
-             AND TABLE_NAME = '{table}' ORDER BY ORDINAL_POSITION"
-        ))?;
+             AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
+            (table.to_string(),),
+        )?;
         Ok(rows.into_iter().map(|(s,)| s).collect())
     }
 
