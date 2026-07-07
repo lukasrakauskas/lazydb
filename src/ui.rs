@@ -681,6 +681,10 @@ fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
     let view = shortcuts::current_view(
         app.focus,
         app.form.is_some(),
+        app.form
+            .as_ref()
+            .and_then(|f| f.kind_picker.as_ref())
+            .is_some(),
         app.features_open,
         app.confirm_destructive.is_some(),
         app.confirm_delete.is_some(),
@@ -739,24 +743,23 @@ fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .title(if form.edit_index.is_some() {
-            "Edit Connection  (Enter: save, Esc: cancel, Tab: next, Ctrl+K: type, Ctrl+T: test)"
+            "Edit Connection  (Enter: save, Esc: cancel, Tab: next, Ctrl+K: pick, Ctrl+T: test)"
         } else {
-            "New Connection  (Enter: save, Esc: cancel, Tab: next, Ctrl+K: type, Ctrl+T: test)"
+            "New Connection  (Enter: save, Esc: cancel, Tab: next, Ctrl+K: pick, Ctrl+T: test)"
         })
         .border_style(theme::FORM_BORDER);
     let inner = b.inner(pop);
     f.render_widget(b, pop);
 
     let mut lines: Vec<Line> = Vec::new();
-    // ponytail: Type row is a cyclable picker (Ctrl+K), not a text field, so
-    // it sits above the LABELS rows and isn't part of Tab navigation — keeps
-    // the text-field indexing/cursor math untouched. The ◄ ► hint signals it.
+    let type_style = if form.active == 0 {
+        theme::FORM_ACTIVE_FIELD
+    } else {
+        Style::default()
+    };
     lines.push(Line::from(vec![
         Span::styled(format!("{:>9}: ", "Type"), theme::FORM_LABEL),
-        Span::styled(
-            format!("{}  ◄ Ctrl+K ►", form.kind),
-            theme::FORM_ACTIVE_FIELD,
-        ),
+        Span::styled(format!("{}  ▼", form.kind), type_style),
     ]));
     for (i, label) in FormState::LABELS.iter().enumerate() {
         let val = if i == 4 {
@@ -764,7 +767,8 @@ fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
         } else {
             form.fields[i].clone()
         };
-        let val_style = if i == form.active {
+        let fld_active = i + 1;
+        let val_style = if fld_active == form.active {
             theme::FORM_ACTIVE_FIELD
         } else {
             Style::default()
@@ -776,12 +780,82 @@ fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
     }
     f.render_widget(Paragraph::new(lines), inner);
 
-    // Text fields start one row below the Type row.
-    let cx = inner.x + 11 + form.cursor as u16;
-    let cy = inner.y + 1 + form.active as u16;
-    if cx < inner.right() && cy < inner.bottom() {
-        f.set_cursor_position((cx, cy));
+    if form.kind_picker.is_none() {
+        let cx = inner.x + 11
+            + if form.active == 0 {
+                form.kind.len() as u16
+            } else {
+                form.cursor as u16
+            };
+        let cy = inner.y + form.active as u16;
+        if cx < inner.right() && cy < inner.bottom() {
+            f.set_cursor_position((cx, cy));
+        }
     }
+
+    if form.kind_picker.is_some() {
+        draw_form_kind_picker(f, form, pop);
+    }
+}
+
+fn draw_form_kind_picker(f: &mut Frame, form: &FormState, pop: Rect) {
+    let Some(picker) = &form.kind_picker else { return };
+    let n = picker.filtered.len().min(6);
+    let w = 30u16.min(pop.width.saturating_sub(12));
+    let h = 3 + n as u16; // top border + input + n items + bottom border
+    let x = (pop.x + 11).min(pop.right().saturating_sub(w));
+    let y = (pop.y + 2).min(pop.bottom().saturating_sub(h));
+
+    let rect = Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, rect);
+
+    let b = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme::FORM_BORDER);
+    let inner = b.inner(rect);
+    f.render_widget(b, rect);
+
+    let input = Line::from(vec![
+        Span::styled(" ", theme::AUTOCOMPLETE_ITEM),
+        Span::styled(&picker.query, theme::AUTOCOMPLETE_ITEM),
+        Span::styled("▏", theme::AUTOCOMPLETE_CURSOR),
+    ]);
+    f.render_widget(
+        Paragraph::new(input),
+        Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 1,
+        },
+    );
+
+    for (i, &idx) in picker.filtered.iter().take(6).enumerate() {
+        let style = if i == picker.cursor {
+            theme::AUTOCOMPLETE_CURSOR
+        } else {
+            theme::AUTOCOMPLETE_ITEM
+        };
+        let text = format!(
+            " {:width$}",
+            FormState::KINDS[idx],
+            width = (w - 3) as usize
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(text, style))),
+            Rect {
+                x: inner.x,
+                y: inner.y + 1 + i as u16,
+                width: inner.width,
+                height: 1,
+            },
+        );
+    }
+
+    // Cursor on the input line
+    let cx = (inner.x + 1 + picker.query.len() as u16).min(inner.right().saturating_sub(1));
+    f.set_cursor_position((cx, inner.y));
 }
 
 fn draw_features(f: &mut Frame, app: &App, area: Rect) {

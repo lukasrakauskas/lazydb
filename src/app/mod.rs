@@ -408,9 +408,15 @@ impl App {
             return;
         }
         self.last_key = Some(format_key_event(&key));
+        let kind_picker = self
+            .form
+            .as_ref()
+            .and_then(|f| f.kind_picker.as_ref())
+            .is_some();
         let view = shortcuts::current_view(
             self.focus,
             self.form.is_some(),
+            kind_picker,
             self.features_open,
             self.confirm_destructive.is_some(),
             self.confirm_delete.is_some(),
@@ -623,17 +629,36 @@ impl App {
             SchemaExpand => self.schema_expand_or_run(),
             SchemaCollapse => self.schema_collapse_at_cursor(),
 
-            FormSave => self.save_form(),
+            FormSave => {
+                let on_type = self
+                    .form
+                    .as_ref()
+                    .is_some_and(|f| f.active == 0 && f.kind_picker.is_none());
+                if on_type {
+                    if let Some(form) = &mut self.form {
+                        form.kind_picker = Some(KindPickerState::new());
+                    }
+                } else {
+                    self.save_form();
+                }
+            }
             FormCancel => self.form = None,
             FormTestConnection => self.test_connection(),
             FormFieldNext => self.form_field_next(1),
             FormFieldPrev => self.form_field_next(-1),
+            FormFieldDown => self.form_field_down(),
+            FormFieldUp => self.form_field_up(),
             FormFieldLeft => self.form_field_left(),
             FormFieldRight => self.form_field_right(),
             FormFieldHome => self.form_field_home(),
             FormFieldEnd => self.form_field_end(),
             FormFieldBackspace => self.form_field_backspace(),
-            FormCycleKind => self.form_cycle_kind(),
+            FormKindPickerToggle => self.form_kind_picker_toggle(),
+            FormKindPickerSelect => self.form_kind_picker_select(),
+            FormKindPickerNext => self.form_kind_picker_next(),
+            FormKindPickerPrev => self.form_kind_picker_prev(),
+            FormKindPickerBackspace => self.form_kind_picker_backspace(),
+            FormKindPickerClose => self.form_kind_picker_close(),
 
             FeaturesClose => self.features_open = false,
             FeaturesNext => self.features_move(1),
@@ -703,6 +728,15 @@ impl App {
                     self.editor.insert_char(c);
                     self.refresh_autocomplete();
                 }
+                View::KindPicker => {
+                    if let Some(form) = &mut self.form {
+                        if let Some(picker) = &mut form.kind_picker {
+                            let mut q = picker.query.clone();
+                            q.push(c);
+                            picker.set_query(q);
+                        }
+                    }
+                }
                 View::ResultsFilter => {
                     let q = match &self.result_filter {
                         Some(f) => format!("{}{c}", f.query),
@@ -712,8 +746,19 @@ impl App {
                 }
                 View::Form => {
                     if let Some(f) = self.form.as_mut() {
-                        f.fields[f.active].insert(f.cursor, c);
-                        f.cursor += 1;
+                        if f.active == 0 {
+                            if f.kind_picker.is_none() {
+                                f.kind_picker = Some(KindPickerState::new());
+                            }
+                            if let Some(p) = &mut f.kind_picker {
+                                let mut q = p.query.clone();
+                                q.push(c);
+                                p.set_query(q);
+                            }
+                        } else {
+                            f.fields[f.active - 1].insert(f.cursor, c);
+                            f.cursor += 1;
+                        }
                     }
                 }
                 View::ResultsEdit => {
@@ -853,9 +898,10 @@ impl App {
         let Some(form) = self.form.as_mut() else {
             return;
         };
-        let last = FormState::LABELS.len() - 1;
+        // active: 0 = Type row, 1-6 = Name..Database (fields[0..5]).
+        let last = form.fields.len();
         form.active = if dir > 0 {
-            if form.active == last {
+            if form.active >= last {
                 0
             } else {
                 form.active + 1
@@ -865,41 +911,117 @@ impl App {
         } else {
             form.active - 1
         };
-        form.cursor = form.fields[form.active].len();
+        form.cursor = if form.active == 0 {
+            0
+        } else {
+            form.fields[form.active - 1].len()
+        };
     }
 
     fn form_field_left(&mut self) {
-        if let Some(f) = self.form.as_mut() {
+        if let Some(f) = self.form.as_mut() && f.active > 0 {
             f.cursor = f.cursor.saturating_sub(1);
         }
     }
     fn form_field_right(&mut self) {
-        if let Some(f) = self.form.as_mut() {
-            f.cursor = (f.cursor + 1).min(f.fields[f.active].len());
+        if let Some(f) = self.form.as_mut() && f.active > 0 {
+            f.cursor = (f.cursor + 1).min(f.fields[f.active - 1].len());
         }
     }
     fn form_field_home(&mut self) {
-        if let Some(f) = self.form.as_mut() {
+        if let Some(f) = self.form.as_mut() && f.active > 0 {
             f.cursor = 0;
         }
     }
     fn form_field_end(&mut self) {
-        if let Some(f) = self.form.as_mut() {
-            f.cursor = f.fields[f.active].len();
+        if let Some(f) = self.form.as_mut() && f.active > 0 {
+            f.cursor = f.fields[f.active - 1].len();
         }
     }
     fn form_field_backspace(&mut self) {
         if let Some(f) = self.form.as_mut()
+            && f.active > 0
             && f.cursor > 0
         {
             f.cursor -= 1;
-            f.fields[f.active].remove(f.cursor);
+            f.fields[f.active - 1].remove(f.cursor);
         }
     }
 
-    fn form_cycle_kind(&mut self) {
-        if let Some(f) = self.form.as_mut() {
-            f.cycle_kind();
+    fn form_field_down(&mut self) {
+        if let Some(form) = &mut self.form {
+            if form.active == 0 && form.kind_picker.is_none() {
+                form.kind_picker = Some(KindPickerState::new());
+                return;
+            }
+        }
+        self.form_field_next(1);
+    }
+
+    fn form_field_up(&mut self) {
+        if let Some(form) = &mut self.form {
+            if form.active == 0 && form.kind_picker.is_none() {
+                form.kind_picker = Some(KindPickerState::new());
+                return;
+            }
+        }
+        self.form_field_next(-1);
+    }
+
+    fn form_kind_picker_toggle(&mut self) {
+        if let Some(form) = &mut self.form {
+            if form.kind_picker.is_some() {
+                form.kind_picker = None;
+            } else {
+                form.kind_picker = Some(KindPickerState::new());
+            }
+        }
+    }
+
+    fn form_kind_picker_select(&mut self) {
+        let Some(form) = &mut self.form else { return };
+        let Some(picker) = form.kind_picker.take() else { return };
+        let Some(kind) = picker.selected_kind() else { return };
+        if form.fields[2] == FormState::default_port(&form.kind).to_string() {
+            form.fields[2] = FormState::default_port(kind).to_string();
+        }
+        form.kind = kind.into();
+        form.active = 1;
+        form.cursor = form.fields[0].len();
+    }
+
+    fn form_kind_picker_next(&mut self) {
+        if let Some(form) = &mut self.form {
+            if let Some(picker) = &mut form.kind_picker {
+                let n = picker.filtered.len();
+                if n > 0 {
+                    picker.cursor = (picker.cursor + 1).min(n - 1);
+                }
+            }
+        }
+    }
+
+    fn form_kind_picker_prev(&mut self) {
+        if let Some(form) = &mut self.form {
+            if let Some(picker) = &mut form.kind_picker {
+                picker.cursor = picker.cursor.saturating_sub(1);
+            }
+        }
+    }
+
+    fn form_kind_picker_backspace(&mut self) {
+        if let Some(form) = &mut self.form {
+            if let Some(picker) = &mut form.kind_picker {
+                let mut q = picker.query.clone();
+                q.pop();
+                picker.set_query(q);
+            }
+        }
+    }
+
+    fn form_kind_picker_close(&mut self) {
+        if let Some(form) = &mut self.form {
+            form.kind_picker = None;
         }
     }
 
