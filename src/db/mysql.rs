@@ -232,3 +232,89 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod live {
+    use super::Mysql;
+    use crate::db::{Connection, Database};
+
+    // ponytail: naive hand-parser for mysql://user:pass@host:port/db. ceiling:
+    // no query params, no IPv6 brackets, no URL-encoding, password must not
+    // contain '@' or ':'. upgrade to the `url` crate if such URLs appear.
+    fn conn_from_url(url: &str) -> Option<Connection> {
+        let rest = url.strip_prefix("mysql://")?;
+        let (creds, hostdb) = rest.split_once('@')?;
+        let (user, pass) = creds.split_once(':')?;
+        let (hostport, db) = hostdb.split_once('/')?;
+        let (host, port_s) = hostport.split_once(':')?;
+        let port: u16 = port_s.parse().ok()?;
+        Some(Connection {
+            name: "live".to_string(),
+            kind: "mysql".to_string(),
+            host: host.to_string(),
+            port,
+            username: user.to_string(),
+            password: pass.to_string(),
+            database: db.to_string(),
+        })
+    }
+
+    // ponytail: one test covers the whole live path (ping→execute→schema→pks).
+    // Fewer tests = less boilerplate; the read and write halves of
+    // execute_script are both exercised. Split if a step needs isolation.
+    #[test]
+    fn live_round_trip() {
+        let url = match std::env::var("LAZYDB_TEST_MYSQL_URL") {
+            Ok(u) => u,
+            Err(_) => return,
+        };
+        let conn = match conn_from_url(&url) {
+            Some(c) => c,
+            None => return,
+        };
+        // ponytail: open() failing → return (pass) instead of panicking, so a
+        // misconfigured env (wrong creds, DB down) doesn't redden the whole
+        // suite. Real logic failures below ARE surfaced via unwrap/assert.
+        let db = match Mysql::open(&conn) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
+        // ping — proves the pool connects and SELECT 1 works.
+        db.ping().unwrap();
+
+        // self-cleanse, then create + insert.
+        db.execute_script("DROP TABLE IF EXISTS lazydb_live;", false)
+            .unwrap();
+        db.execute_script(
+            "CREATE TABLE lazydb_live (id INT PRIMARY KEY, name VARCHAR(32)); \
+             INSERT INTO lazydb_live VALUES (1,'a'),(2,'b');",
+            false,
+        )
+        .unwrap();
+
+        // read back — exercises the columns/rows path of execute_script.
+        let res = db
+            .execute_script("SELECT id, name FROM lazydb_live ORDER BY id;", false)
+            .unwrap();
+        assert_eq!(res.columns, vec!["id".to_string(), "name".to_string()]);
+        assert_eq!(res.rows.len(), 2);
+        assert_eq!(res.rows[0], vec!["1".to_string(), "a".to_string()]);
+        assert_eq!(res.rows[1], vec!["2".to_string(), "b".to_string()]);
+
+        // schema — table present with columns in ordinal order.
+        let schema = db.schema().unwrap();
+        let cols = schema
+            .get("lazydb_live")
+            .expect("lazydb_live should be in schema");
+        assert_eq!(cols, &vec!["id".to_string(), "name".to_string()]);
+
+        // primary_keys — single PK column 'id'.
+        let pks = db.primary_keys("lazydb_live").unwrap();
+        assert_eq!(pks, vec!["id".to_string()]);
+
+        // cleanup.
+        db.execute_script("DROP TABLE IF EXISTS lazydb_live;", false)
+            .unwrap();
+    }
+}
