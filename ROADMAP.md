@@ -21,6 +21,7 @@ Strengths worth preserving: trait-based DB layer, view-aware keymap, background 
 ## P1 - Core gaps that block daily-driver use
 
 ### Connection management
+
 - [ ] Edit existing connection (currently create + delete only).
 - [ ] Stop storing passwords in plaintext TOML. Options in order of effort:
       env var references in config -> OS keychain (keyring crate) -> optional both.
@@ -29,6 +30,7 @@ Strengths worth preserving: trait-based DB layer, view-aware keymap, background 
 - [ ] SSL/TLS options.
 
 ### Query execution
+
 - [ ] Query cancellation (Esc or Ctrl+C while running). Currently the only way out of a
       long query is killing the app; `running_query` also blocks new queries.
 - [ ] Configurable query timeout.
@@ -38,6 +40,7 @@ Strengths worth preserving: trait-based DB layer, view-aware keymap, background 
       add a default LIMIT injection or pagination for unbounded SELECTs.
 
 ### Second backend
+
 - [ ] PostgreSQL. The `Database` trait exists; this validates the abstraction and roughly
       doubles the addressable audience. SQLite after (easy win: file-path-only connections,
       great for demos and tests).
@@ -45,6 +48,7 @@ Strengths worth preserving: trait-based DB layer, view-aware keymap, background 
 ## P2 - UX polish
 
 ### Results pane
+
 - [ ] Column sort (cycle asc/desc/none on the cursor column).
 - [ ] Column hide/resize; unicode-width-aware column sizing (CJK/emoji break alignment).
 - [ ] Full-cell inspect popup for long values (JSON blobs, long text) instead of truncation.
@@ -55,6 +59,7 @@ Strengths worth preserving: trait-based DB layer, view-aware keymap, background 
       edit generates UPDATE).
 
 ### Editor
+
 - [ ] Save editor buffer to file (there is load-on-startup but no save).
 - [ ] Resizable/collapsible editor pane (fixed 8 rows wastes space on big terminals,
       cramps on small ones).
@@ -63,11 +68,13 @@ Strengths worth preserving: trait-based DB layer, view-aware keymap, background 
 - [ ] EXPLAIN shortcut with readable output.
 
 ### Schema pane
+
 - [ ] Filter/search within the schema tree (reuse the fuzzy filter).
 - [ ] Show views, procedures, triggers - not just tables.
 - [ ] Include empty tables (current INFORMATION_SCHEMA.COLUMNS query skips them).
 
 ### General
+
 - [ ] Full-screen help modal (`?`) with all keybindings; repurpose current `?` debug
       toggle to a hidden flag.
 - [ ] `--help`/`--version` CLI flags (clap or hand-rolled).
@@ -76,15 +83,15 @@ Strengths worth preserving: trait-based DB layer, view-aware keymap, background 
 
 ## P3 - Project maturity
 
-- [ ] CI: fmt + clippy + test on every push (GitLab CI or GitHub Actions).
-- [ ] Integration tests against real MySQL (docker-compose or testcontainers) - the DB
+- [x] CI: fmt + clippy + test on every push (GitLab CI or GitHub Actions).
+- [x] Integration tests against real MySQL (docker-compose or testcontainers) - the DB
       layer currently has zero live-path coverage.
 - [ ] Release pipeline: tagged releases with prebuilt binaries (cargo-dist),
       publish to crates.io / Homebrew tap.
-- [ ] rustfmt.toml + clippy lints committed; deny.toml for dependency audit.
-- [ ] Structured logging behind a `--log-file` flag (helps debug terminal-mangling bugs
+- [x] rustfmt.toml + clippy lints committed; deny.toml for dependency audit.
+- [x] Structured logging behind a `--log-file` flag (helps debug terminal-mangling bugs
       that are invisible in a TUI).
-- [ ] CONTRIBUTING.md + short architecture doc (the trait/job/keymap design deserves
+- [x] CONTRIBUTING.md + short architecture doc (the trait/job/keymap design deserves
       a paragraph each).
 
 ## Leftover ideas from v1 roadmap
