@@ -157,6 +157,7 @@ fn results_app(nrows: usize, ncols: usize, body_h: usize, vis_cols: usize) -> Ap
             .collect(),
         rows_affected: nrows as u64,
         elapsed_ms: 0,
+        truncated: false,
     };
     app.results_body_h = body_h;
     app.results_visible_cols = vis_cols;
@@ -507,4 +508,70 @@ fn results_filter_esc_cancels() {
     press(&mut app, KeyCode::Esc);
     assert!(app.result_filter.is_none());
     assert_eq!(app.displayed_count(), 30);
+}
+
+#[test]
+fn form_from_connection_prefills_fields() {
+    use crate::db::Connection;
+    let c = Connection {
+        name: "prod".into(),
+        kind: "mysql".into(),
+        host: "db.example.com".into(),
+        port: 3307,
+        username: "u".into(),
+        password: "p".into(),
+        database: "d".into(),
+    };
+    let f = super::FormState::from_connection(2, &c);
+    assert_eq!(f.edit_index, Some(2));
+    assert_eq!(f.fields[0], "prod");
+    assert_eq!(f.fields[1], "db.example.com");
+    assert_eq!(f.fields[2], "3307");
+    assert_eq!(f.fields[3], "u");
+    assert_eq!(f.fields[4], "p");
+    assert_eq!(f.fields[5], "d");
+}
+
+#[test]
+fn save_form_edits_in_place() {
+    use crate::config::HOME_LOCK;
+    use crate::db::Connection;
+    // ponytail: serialize with every other HOME-mutating test (config::tests).
+    let _lock = HOME_LOCK.lock().unwrap();
+    let tmp = std::env::temp_dir().join(format!("lazydb-edit-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let old = std::env::var_os("HOME");
+    unsafe { std::env::set_var("HOME", &tmp) };
+
+    let mut app = super::App::load().unwrap();
+    app.config.connections.push(Connection {
+        name: "old".into(),
+        kind: "mysql".into(),
+        host: "h".into(),
+        port: 3306,
+        username: "u".into(),
+        password: "p".into(),
+        database: "d".into(),
+    });
+    app.conn_cursor = 0;
+    app.edit_selected();
+    assert!(app.form.is_some());
+    assert_eq!(app.form.as_ref().unwrap().edit_index, Some(0));
+    app.form.as_mut().unwrap().fields[0] = "new".into();
+    app.save_form();
+    assert_eq!(
+        app.config.connections.len(),
+        1,
+        "edit must replace, not append"
+    );
+    assert_eq!(app.config.connections[0].name, "new");
+    assert_eq!(app.conn_cursor, 0);
+    assert!(app.form.is_none());
+
+    if let Some(o) = old {
+        unsafe { std::env::set_var("HOME", o) }
+    } else {
+        unsafe { std::env::remove_var("HOME") }
+    }
+    std::fs::remove_dir_all(&tmp).ok();
 }

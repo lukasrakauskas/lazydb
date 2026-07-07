@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use ratatui::layout::Rect;
 
+use crate::db::Connection;
 use crate::filter::CellMatches;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -34,6 +35,7 @@ pub enum Output {
         rows: Vec<Vec<String>>,
         rows_affected: u64,
         elapsed_ms: u128,
+        truncated: bool,
     },
 }
 
@@ -74,6 +76,7 @@ pub struct FormState {
     pub fields: [String; 6],
     pub active: usize,
     pub cursor: usize,
+    pub edit_index: Option<usize>,
 }
 
 impl FormState {
@@ -91,6 +94,26 @@ impl FormState {
             ],
             active: 0,
             cursor: 0,
+            edit_index: None,
+        }
+    }
+
+    /// Pre-fill the form from an existing connection for editing; `idx` is the
+    /// connection slot to overwrite on save. ponytail: kind isn't a form field,
+    /// so it's preserved from the existing connection on save (see save_form).
+    pub fn from_connection(idx: usize, c: &Connection) -> Self {
+        Self {
+            fields: [
+                c.name.clone(),
+                c.host.clone(),
+                c.port.to_string(),
+                c.username.clone(),
+                c.password.clone(),
+                c.database.clone(),
+            ],
+            active: 0,
+            cursor: c.name.len(),
+            edit_index: Some(idx),
         }
     }
 }

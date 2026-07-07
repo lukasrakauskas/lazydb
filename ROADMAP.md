@@ -22,22 +22,32 @@ Strengths worth preserving: trait-based DB layer, view-aware keymap, background 
 
 ### Connection management
 
-- [ ] Edit existing connection (currently create + delete only).
-- [ ] Stop storing passwords in plaintext TOML. Options in order of effort:
-      env var references in config -> OS keychain (keyring crate) -> optional both.
+- [x] Edit existing connection (currently create + delete only).  `e` on a
+      connection opens the form pre-filled; save overwrites in place.
+- [x] Stop storing passwords in plaintext TOML — `${VAR}` / `$VAR` references in
+      connection fields are resolved from the environment at open time (unset →
+      left literal so a missing secret is visible). OS keychain (keyring crate) is
+      the remaining upgrade.
 - [ ] DB type picker in the connection form (currently hardcoded `"mysql"`).
-- [ ] Test-connection button in the form (reuse existing Ping job).
+      Deferred: a picker with one wired backend is speculative UI; add with the
+      second backend.
+- [x] Test-connection button in the form (reuse existing Ping job).  `Ctrl+T` in
+      the form opens + pings; result shows in the status line.
 - [ ] SSL/TLS options.
 
 ### Query execution
 
-- [ ] Query cancellation (Esc or Ctrl+C while running). Currently the only way out of a
-      long query is killing the app; `running_query` also blocks new queries.
-- [ ] Configurable query timeout.
+- [x] Query cancellation (Esc or Ctrl+C while running). A `CancelSlot`
+      (`Arc<AtomicU32>`) carries the running query's connection id; cancel sends
+      `KILL QUERY` from a side connection. Best-effort (needs PROCESS/SUPER).
+- [x] Configurable query timeout — `query_timeout_secs` in config becomes the
+      pool's socket `read_timeout`.
 - [ ] Display all result sets from multi-statement runs, not just the first
-      (tabbed or stacked results).
-- [ ] Row limit guard / streaming: full result sets load into `Vec<Vec<String>>`;
-      add a default LIMIT injection or pagination for unbounded SELECTs.
+      (tabbed or stacked results).  Deferred: needs an `Output` refactor (active
+      result-set index) — separate ticket.
+- [x] Row limit guard — `select_limit` in config caps the fetch per result set
+      and sets a `truncated` flag shown in the results title. Server-side LIMIT
+      injection / pagination deferred (parsing risk).
 
 ### Second backend
 

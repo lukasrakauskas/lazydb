@@ -1,16 +1,19 @@
 use anyhow::Result;
-use mysql::{Opts, Pool, Value, prelude::*};
+use mysql::{Opts, OptsBuilder, Pool, Value, prelude::*};
 use std::collections::HashMap;
+use std::time::Duration;
 
-use super::{Connection, Database, ExecutionResult};
+use super::{Connection, Database, ExecCtx, ExecutionResult};
 
 pub struct Mysql {
     pool: Pool,
 }
 
 impl Mysql {
-    pub fn open(conn: &Connection) -> Result<Self> {
-        // ponytail: password used in plaintext; fine for a local dev tool.
+    pub fn open(conn: &Connection, read_timeout: Option<Duration>) -> Result<Self> {
+        // ponytail: secrets may be `${VAR}` references, resolved in db::open;
+        // the literal password here is the resolved value. plaintext at rest is
+        // the YAGNI default; env-var references avoid committing secrets.
         let url = format!(
             "mysql://{}:{}@{}:{}/{}",
             pct(&conn.username),
@@ -19,7 +22,16 @@ impl Mysql {
             conn.port,
             pct(&conn.database),
         );
-        let pool = Pool::new(Opts::from_url(&url)?)?;
+        // ponytail: read_timeout is the query timeout — a socket-level cap set
+        // once on the pool. Per-query timeout would need a fresh conn per query;
+        // a per-connection default from config covers the TUI's one-at-a-time use.
+        let pool = {
+            let mut b = OptsBuilder::from_opts(Opts::from_url(&url)?);
+            if let Some(t) = read_timeout {
+                b = b.read_timeout(Some(t));
+            }
+            Pool::new(b)?
+        };
         Ok(Self { pool })
     }
 }
@@ -41,17 +53,21 @@ impl Database for Mysql {
         Ok(map)
     }
 
-    fn execute_script(&self, sql: &str, readable_binary: bool) -> Result<ExecutionResult> {
+    fn execute_script(&self, sql: &str, ctx: &ExecCtx) -> Result<ExecutionResult> {
         let mut conn = self.pool.get_conn()?;
         let mut columns: Vec<String> = Vec::new();
         let mut rows: Vec<Vec<String>> = Vec::new();
         let mut rows_affected = 0u64;
+        let mut truncated = false;
+        let limit = ctx.limit;
 
         for part in crate::db::sql::split_statements(sql) {
             let part = part.trim();
             if part.is_empty() {
                 continue;
             }
+            // Record this connection's id so the UI can KILL QUERY on cancel.
+            ctx.cancel.set(conn.connection_id());
             let mut result = conn.query_iter(part)?;
             let set_cols: Vec<String> = result
                 .columns()
@@ -66,17 +82,32 @@ impl Database for Mysql {
                 if columns.is_empty() {
                     columns = set_cols.clone();
                 }
-                for row in result.by_ref() {
+                // ponytail: row-limit guard caps client memory by stopping the
+                // fetch after `limit` rows. The server still runs the query; a
+                // pushed-down LIMIT needs SQL parsing (risk of corrupting
+                // subqueries/UNION), so this is the safe middle. `truncated`
+                // flags it in the UI. upgrade: server-side LIMIT via a parser.
+                for (i, row) in result.by_ref().enumerate() {
+                    if let Some(cap) = limit
+                        && i >= cap
+                    {
+                        truncated = true;
+                        break;
+                    }
                     let row = row?;
                     let mut r = Vec::with_capacity(set_cols.len());
-                    for i in 0..set_cols.len() {
-                        let v: Value = row.as_ref(i).cloned().unwrap_or(Value::NULL);
-                        r.push(value_to_string(v, readable_binary));
+                    for k in 0..set_cols.len() {
+                        let v: Value = row.as_ref(k).cloned().unwrap_or(Value::NULL);
+                        r.push(value_to_string(v, ctx.readable_binary));
                     }
                     rows.push(r);
                 }
             }
             rows_affected = result.affected_rows();
+            ctx.cancel.clear();
+            if truncated {
+                break;
+            }
         }
 
         Ok(ExecutionResult {
@@ -84,6 +115,7 @@ impl Database for Mysql {
             rows,
             rows_affected,
             elapsed_ms: 0,
+            truncated,
         })
     }
 
@@ -98,6 +130,13 @@ impl Database for Mysql {
         Ok(rows.into_iter().map(|(s,)| s).collect())
     }
 
+    fn kill_query(&self, conn_id: u32) -> Result<()> {
+        // ponytail: best-effort — needs PROCESS/SUPER (MySQL 8: CONNECTION_ADMIN).
+        // Same-user kill of own query usually works; failures surface as a status note.
+        let mut conn = self.pool.get_conn()?;
+        conn.query_drop(format!("KILL QUERY {conn_id}"))?;
+        Ok(())
+    }
     fn boxed_clone(&self) -> Box<dyn Database> {
         Box::new(Self {
             pool: self.pool.clone(),
@@ -236,7 +275,7 @@ mod tests {
 #[cfg(test)]
 mod live {
     use super::Mysql;
-    use crate::db::{Connection, Database};
+    use crate::db::{CancelSlot, Connection, Database, ExecCtx};
 
     // ponytail: naive hand-parser for mysql://user:pass@host:port/db. ceiling:
     // no query params, no IPv6 brackets, no URL-encoding, password must not
@@ -259,6 +298,13 @@ mod live {
         })
     }
 
+    fn ctx(limit: Option<usize>) -> ExecCtx {
+        ExecCtx {
+            cancel: CancelSlot::new(),
+            readable_binary: false,
+            limit,
+        }
+    }
     // ponytail: one test covers the whole live path (ping→execute→schema→pks).
     // Fewer tests = less boilerplate; the read and write halves of
     // execute_script are both exercised. Split if a step needs isolation.
@@ -275,7 +321,7 @@ mod live {
         // ponytail: open() failing → return (pass) instead of panicking, so a
         // misconfigured env (wrong creds, DB down) doesn't redden the whole
         // suite. Real logic failures below ARE surfaced via unwrap/assert.
-        let db = match Mysql::open(&conn) {
+        let db = match Mysql::open(&conn, None) {
             Ok(d) => d,
             Err(_) => return,
         };
@@ -284,18 +330,13 @@ mod live {
         db.ping().unwrap();
 
         // self-cleanse, then create + insert.
-        db.execute_script("DROP TABLE IF EXISTS lazydb_live;", false)
+        db.execute_script("DROP TABLE IF EXISTS lazydb_live;", &ctx(None))
             .unwrap();
-        db.execute_script(
-            "CREATE TABLE lazydb_live (id INT PRIMARY KEY, name VARCHAR(32)); \
-             INSERT INTO lazydb_live VALUES (1,'a'),(2,'b');",
-            false,
-        )
-        .unwrap();
+        db.execute_script("CREATE TABLE lazydb_live (id INT PRIMARY KEY, name VARCHAR(32)); INSERT INTO lazydb_live VALUES (1,'a'),(2,'b');", &ctx(None)).unwrap();
 
         // read back — exercises the columns/rows path of execute_script.
         let res = db
-            .execute_script("SELECT id, name FROM lazydb_live ORDER BY id;", false)
+            .execute_script("SELECT id, name FROM lazydb_live ORDER BY id;", &ctx(None))
             .unwrap();
         assert_eq!(res.columns, vec!["id".to_string(), "name".to_string()]);
         assert_eq!(res.rows.len(), 2);
@@ -314,7 +355,36 @@ mod live {
         assert_eq!(pks, vec!["id".to_string()]);
 
         // cleanup.
-        db.execute_script("DROP TABLE IF EXISTS lazydb_live;", false)
+        db.execute_script("DROP TABLE IF EXISTS lazydb_live;", &ctx(None))
+            .unwrap();
+    }
+
+    #[test]
+    fn live_select_limit_truncates() {
+        // ponytail: row-limit guard caps the fetch and sets `truncated`.
+        let url = match std::env::var("LAZYDB_TEST_MYSQL_URL") {
+            Ok(u) => u,
+            Err(_) => return,
+        };
+        let conn = match conn_from_url(&url) {
+            Some(c) => c,
+            None => return,
+        };
+        let db = match Mysql::open(&conn, None) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        db.execute_script("DROP TABLE IF EXISTS lazydb_lim;", &ctx(None))
+            .unwrap();
+        db.execute_script("CREATE TABLE lazydb_lim (id INT PRIMARY KEY); INSERT INTO lazydb_lim VALUES (1),(2),(3),(4),(5);", &ctx(None)).unwrap();
+        let res = db
+            .execute_script("SELECT id FROM lazydb_lim ORDER BY id;", &ctx(Some(2)))
+            .unwrap();
+        assert_eq!(res.rows.len(), 2, "should cap at 2 rows");
+        assert_eq!(res.rows[0], vec!["1".to_string()]);
+        assert_eq!(res.rows[1], vec!["2".to_string()]);
+        assert!(res.truncated, "truncated flag must be set");
+        db.execute_script("DROP TABLE IF EXISTS lazydb_lim;", &ctx(None))
             .unwrap();
     }
 }

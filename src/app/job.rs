@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 
-use crate::db::{Database, ExecutionResult};
+use crate::db::{Database, ExecCtx, ExecutionResult};
 
 pub enum Job {
     Ping(Box<dyn Database>, String),
-    Query(Box<dyn Database>, String, bool),
+    Query(Box<dyn Database>, String, ExecCtx),
     Schema(Box<dyn Database>),
     PrimaryKeys(Box<dyn Database>, String),
-    UpdateCell(Box<dyn Database>, String),
+    UpdateCell(Box<dyn Database>, String, ExecCtx),
 }
 
 pub enum JobResult {
@@ -31,9 +31,9 @@ pub fn spawn_job(job: Job) -> Receiver<JobResult> {
                     JobResult::Ping(Err(s))
                 }
             },
-            Job::Query(db, sql, readable_binary) => {
+            Job::Query(db, sql, ctx) => {
                 let start = std::time::Instant::now();
-                match db.execute_script(&sql, readable_binary) {
+                match db.execute_script(&sql, &ctx) {
                     Ok(mut r) => {
                         r.elapsed_ms = start.elapsed().as_millis();
                         JobResult::Query(Ok(r))
@@ -53,9 +53,9 @@ pub fn spawn_job(job: Job) -> Receiver<JobResult> {
                 Ok(pks) => JobResult::PrimaryKeys(Ok(pks)),
                 Err(e) => JobResult::PrimaryKeys(Err(e.to_string())),
             },
-            Job::UpdateCell(db, sql) => {
+            Job::UpdateCell(db, sql, ctx) => {
                 let start = std::time::Instant::now();
-                match db.execute_script(&sql, false) {
+                match db.execute_script(&sql, &ctx) {
                     Ok(mut r) => {
                         r.elapsed_ms = start.elapsed().as_millis();
                         JobResult::UpdateCell(Ok(r))

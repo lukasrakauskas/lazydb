@@ -276,6 +276,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
             columns,
             rows,
             rows_affected,
+            truncated,
             ..
         } if !columns.is_empty() => {
             // Title shows displayed count when filtered, plus the filter query.
@@ -284,8 +285,9 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
                 None => (rows.len(), String::new()),
             };
             let cur_row = app.result_cursor_row.map(|i| i + 1).unwrap_or(0);
+            let trunc = if *truncated { "  ·  truncated" } else { "" };
             format!(
-                "Results  ·  {} rows  ·  {} affected  ·  row {}/{}  col {}/{}{}",
+                "Results  ·  {} rows  ·  {} affected  ·  row {}/{}  col {}/{}{}{}",
                 nrows,
                 rows_affected,
                 cur_row,
@@ -293,6 +295,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
                 app.result_cursor_col + 1,
                 columns.len(),
                 suffix,
+                trunc,
             )
         }
         _ => "Results".to_string(),
@@ -702,7 +705,11 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         .db_name
         .clone()
         .unwrap_or_else(|| "not connected".into());
-    let spinner = if app.running_query { " ⏳" } else { "" };
+    let spinner = if app.running_query {
+        " ⏳ (Esc/Ctrl+C to cancel)"
+    } else {
+        ""
+    };
     let left = format!(" {conn}{spinner} | {} ", app.status);
     // ponytail: the key-log inspector shares this line (right side). The
     // shortcut hints moved up to the dedicated shortcuts bar.
@@ -731,7 +738,11 @@ fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
     let b = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .title("New Connection  (Enter: save, Esc: cancel, Tab: next field)")
+        .title(if form.edit_index.is_some() {
+            "Edit Connection  (Enter: save, Esc: cancel, Tab: next, Ctrl+T: test)"
+        } else {
+            "New Connection  (Enter: save, Esc: cancel, Tab: next, Ctrl+T: test)"
+        })
         .border_style(theme::FORM_BORDER);
     let inner = b.inner(pop);
     f.render_widget(b, pop);

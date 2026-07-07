@@ -1,8 +1,13 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, time::Duration};
 
 use crate::db::Connection;
+
+/// ponytail: HOME is process-global; serialize tests that mutate it so parallel
+/// `cargo test` threads don't race. Shared across `config::tests` and `app::tests`.
+#[cfg(test)]
+pub(crate) static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Config {
@@ -11,6 +16,12 @@ pub struct Config {
     // `[features]` table still load (back-compat).
     #[serde(default)]
     pub features: Features,
+    // ponytail: query timeout / row cap are config-file settings (no UI yet);
+    // both #[serde(default)] so older config files without them still load.
+    #[serde(default)]
+    pub query_timeout_secs: Option<u64>,
+    #[serde(default)]
+    pub select_limit: Option<usize>,
 }
 
 /// Togglable app features, persisted in the config file. Add a field + an
@@ -58,6 +69,14 @@ impl Config {
             .unwrap_or_default()
     }
 
+    /// Socket read-timeout applied to every query on a connection.
+    /// `None`/`0` = no timeout (wait forever). ponytail: a per-connection timeout
+    /// would live on `Connection`; this is a global default from config.
+    pub fn query_timeout(&self) -> Option<Duration> {
+        self.query_timeout_secs
+            .filter(|&s| s > 0)
+            .map(Duration::from_secs)
+    }
     pub fn save(&self) -> Result<()> {
         let p = path()?;
         if let Some(dir) = p.parent() {
@@ -72,15 +91,10 @@ impl Config {
 mod tests {
     use super::*;
     use crate::db::Connection;
-    use std::sync::Mutex;
-
-    // ponytail: HOME is process-global; serialize the tests that mutate it
-    // so parallel `cargo test` threads don't race.
-    static HOME_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn config_roundtrips() {
-        let _lock = HOME_LOCK.lock().unwrap();
+        let _lock = super::HOME_LOCK.lock().unwrap();
         let tmp = std::env::temp_dir().join(format!("lazydb-home-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let old = std::env::var_os("HOME");
@@ -101,6 +115,8 @@ mod tests {
             features: Features {
                 readable_binary: true,
             },
+            query_timeout_secs: Some(30),
+            select_limit: Some(1000),
         };
         cfg.save().unwrap();
         let loaded = Config::load();
@@ -121,13 +137,15 @@ mod tests {
         assert_eq!(loaded.connections[0].password, "p@ss");
         assert_eq!(loaded.connections[0].port, 3306);
         assert!(loaded.features.readable_binary);
+        assert_eq!(loaded.query_timeout_secs, Some(30));
+        assert_eq!(loaded.select_limit, Some(1000));
     }
 
     // ponytail: old config files written before the `[features]` table existed
     // must still load (serde default).
     #[test]
     fn config_loads_without_features_table() {
-        let _lock = HOME_LOCK.lock().unwrap();
+        let _lock = super::HOME_LOCK.lock().unwrap();
         let tmp = std::env::temp_dir().join(format!("lazydb-home-nf-{}", std::process::id()));
         std::fs::create_dir_all(tmp.join(".config/lazydb")).unwrap();
         let old = std::env::var_os("HOME");

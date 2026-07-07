@@ -69,6 +69,7 @@ pub enum Action {
     ConnectSelected,
     NewConnection,
     DeleteConnection,
+    EditConnection,
     // editor
     EditorNewline,
     EditorBackspace,
@@ -110,6 +111,7 @@ pub enum Action {
     // form modal
     FormSave,
     FormCancel,
+    FormTestConnection,
     FormFieldNext,
     FormFieldPrev,
     FormFieldLeft,
@@ -330,6 +332,12 @@ static CONNECTIONS: &[Binding] = &[
         keys: &[ch('d', "d")],
         label: "delete",
         action: Action::DeleteConnection,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ch('e', "e")],
+        label: "edit",
+        action: Action::EditConnection,
         hidden: false,
     },
 ];
@@ -712,6 +720,12 @@ static FORM: &[Binding] = &[
         keys: &[bare(KeyCode::Backspace, "⌫")],
         label: "del",
         action: Action::FormFieldBackspace,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ctrl('t', "Ctrl+T")],
+        label: "test",
+        action: Action::FormTestConnection,
         hidden: false,
     },
 ];

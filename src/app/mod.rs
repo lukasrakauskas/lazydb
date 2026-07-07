@@ -21,7 +21,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::autocomplete;
 use crate::config::{Config, Features};
-use crate::db::{self, Connection, Database};
+use crate::db::{self, CancelSlot, Connection, Database, ExecCtx};
 use crate::editor::Editor;
 use crate::filter::CellMatches;
 use crate::shortcuts::{self, Action, View};
@@ -70,6 +70,10 @@ pub struct App {
     pub edit_cell: Option<EditCellState>,
     pub edit_cell_pending: Option<EditCellPending>,
     pub pending_cell_update: Option<(usize, usize, String)>,
+    // ponytail: one cancel slot reused per job (Arc<AtomicU32> conn-id, 0 = idle).
+    cancel: CancelSlot,
+    cancel_requested: bool,
+    testing_connection: bool,
 }
 
 impl App {
@@ -115,6 +119,9 @@ impl App {
             edit_cell: None,
             edit_cell_pending: None,
             pending_cell_update: None,
+            cancel: CancelSlot::new(),
+            cancel_requested: false,
+            testing_connection: false,
         })
     }
 
@@ -128,9 +135,10 @@ impl App {
             return;
         }
         let conn = self.config.connections[self.conn_cursor].clone();
-        match db::open(&conn) {
+        match db::open(&conn, self.config.query_timeout()) {
             Ok(db) => {
                 crate::log::info("connect", &[("name", &conn.name)]);
+                self.testing_connection = false;
                 self.pending_db = Some(db.boxed_clone());
                 self.rx = Some(spawn_job(Job::Ping(db, conn.name.clone())));
                 self.running_query = true;
@@ -196,7 +204,12 @@ impl App {
         self.history_draft = None;
         let head: String = sql.chars().take(120).collect();
         crate::log::info("query", &[("sql_head", &head)]);
-        self.rx = Some(spawn_job(Job::Query(db, sql, readable_binary)));
+        self.cancel.clear();
+        self.rx = Some(spawn_job(Job::Query(
+            db,
+            sql,
+            self.exec_ctx(readable_binary),
+        )));
         self.running_query = true;
         self.query_start = Some(Instant::now());
         self.status = "Running query…".into();
@@ -211,25 +224,38 @@ impl App {
     }
 
     fn save_form(&mut self) {
-        let conn = {
-            let form = self.form.as_ref().unwrap();
-            let port: u16 = form.fields[2].parse().unwrap_or(3306);
-            Connection {
-                name: form.fields[0].clone(),
-                kind: "mysql".into(),
-                host: form.fields[1].clone(),
-                port,
-                username: form.fields[3].clone(),
-                password: form.fields[4].clone(),
-                database: form.fields[5].clone(),
-            }
+        let Some(form) = self.form.as_ref() else {
+            return;
         };
-        if conn.name.trim().is_empty() {
+        if form.fields[0].trim().is_empty() {
             self.status = "Name is required.".into();
             return;
         }
-        self.config.connections.push(conn);
-        self.conn_cursor = self.config.connections.len() - 1;
+        let port: u16 = form.fields[2].parse().unwrap_or(3306);
+        let edit_index = form.edit_index;
+        let fields = form.fields.clone();
+        // ponytail: kind isn't a form field; preserve it from the connection
+        // being edited, or default to mysql for new connections.
+        let kind = edit_index
+            .and_then(|i| self.config.connections.get(i))
+            .map(|c| c.kind.clone())
+            .unwrap_or_else(|| "mysql".into());
+        let conn = Connection {
+            name: fields[0].clone(),
+            kind,
+            host: fields[1].clone(),
+            port,
+            username: fields[3].clone(),
+            password: fields[4].clone(),
+            database: fields[5].clone(),
+        };
+        if let Some(i) = edit_index.filter(|i| *i < self.config.connections.len()) {
+            self.config.connections[i] = conn;
+            self.conn_cursor = i;
+        } else {
+            self.config.connections.push(conn);
+            self.conn_cursor = self.config.connections.len() - 1;
+        }
         match self.config.save() {
             Ok(()) => {
                 self.form = None;
@@ -242,44 +268,71 @@ impl App {
     fn apply_job(&mut self, res: JobResult) {
         self.running_query = false;
         match res {
-            JobResult::Ping(r) => match r {
-                Ok(name) => {
-                    self.db = self.pending_db.take();
-                    self.db_name = Some(name.clone());
-                    self.status = format!("Connected to {name}. Loading schema…");
-                    self.output = Output::Message(format!("Connected to {name}."));
-                    self.schema.clear();
-                    if let Some(db) = self.db.as_ref() {
-                        self.rx = Some(spawn_job(Job::Schema(db.boxed_clone())));
+            JobResult::Ping(r) => {
+                if self.testing_connection {
+                    self.testing_connection = false;
+                    self.status = match &r {
+                        Ok(name) => format!("Connection OK: {name}"),
+                        Err(e) => format!("Connection failed: {e}"),
+                    };
+                    return;
+                }
+                match r {
+                    Ok(name) => {
+                        self.db = self.pending_db.take();
+                        self.db_name = Some(name.clone());
+                        self.status = format!("Connected to {name}. Loading schema…");
+                        self.output = Output::Message(format!("Connected to {name}."));
+                        self.schema.clear();
+                        if let Some(db) = self.db.as_ref() {
+                            self.rx = Some(spawn_job(Job::Schema(db.boxed_clone())));
+                        }
+                    }
+                    Err(e) => {
+                        self.pending_db = None;
+                        self.status = format!("Connection failed: {e}");
+                        self.output = Output::Message(format!("Connection failed: {e}"));
                     }
                 }
-                Err(e) => {
-                    self.pending_db = None;
-                    self.status = format!("Connection failed: {e}");
-                    self.output = Output::Message(format!("Connection failed: {e}"));
+            }
+            JobResult::Query(r) => {
+                let cancelled = self.cancel_requested;
+                self.cancel_requested = false;
+                match r {
+                    Ok(er) => {
+                        let ms = er.elapsed_ms.to_string();
+                        let rows = er.rows.len().to_string();
+                        crate::log::info("query_done", &[("ms", &ms), ("rows", &rows)]);
+                        self.output = Output::Table {
+                            columns: er.columns,
+                            rows: er.rows,
+                            rows_affected: er.rows_affected,
+                            elapsed_ms: er.elapsed_ms,
+                            truncated: er.truncated,
+                        };
+                        self.status = if cancelled {
+                            "Query OK (cancel did not take effect).".into()
+                        } else if er.truncated {
+                            "Query OK (truncated — row cap reached).".into()
+                        } else {
+                            "Query OK.".into()
+                        };
+                        self.query_start = None;
+                    }
+                    Err(e) => {
+                        if cancelled {
+                            crate::log::info("query_cancelled", &[("err", &e)]);
+                            self.output = Output::Message("Query cancelled.".into());
+                            self.status = "Query cancelled.".into();
+                        } else {
+                            crate::log::error("query_err", &[("err", &e)]);
+                            self.output = Output::Message(format!("Error: {e}"));
+                            self.status = "Query failed.".into();
+                        }
+                        self.query_start = None;
+                    }
                 }
-            },
-            JobResult::Query(r) => match r {
-                Ok(er) => {
-                    let ms = er.elapsed_ms.to_string();
-                    let rows = er.rows.len().to_string();
-                    crate::log::info("query_done", &[("ms", &ms), ("rows", &rows)]);
-                    self.output = Output::Table {
-                        columns: er.columns,
-                        rows: er.rows,
-                        rows_affected: er.rows_affected,
-                        elapsed_ms: er.elapsed_ms,
-                    };
-                    self.status = "Query OK.".into();
-                    self.query_start = None;
-                }
-                Err(e) => {
-                    crate::log::error("query_err", &[("err", &e)]);
-                    self.output = Output::Message(format!("Error: {e}"));
-                    self.status = "Query failed.".into();
-                    self.query_start = None;
-                }
-            },
+            }
             JobResult::Schema(r) => match r {
                 Ok(map) => {
                     let n = map.len();
@@ -368,6 +421,21 @@ impl App {
             self.filter_input_open,
             self.edit_cell.is_some(),
         );
+        if self.running_query {
+            let is_cancel = key.code == KeyCode::Esc
+                || (key.modifiers.contains(KeyModifiers::CONTROL)
+                    && key.code == KeyCode::Char('c'));
+            // ponytail: only intercept in plain focus views — modals keep their own Esc.
+            if is_cancel
+                && matches!(
+                    view,
+                    View::Connections | View::Editor | View::Results | View::Schema
+                )
+            {
+                self.cancel_query();
+                return;
+            }
+        }
         if let Some(action) = shortcuts::match_key(view, key) {
             self.apply_action(view, action);
             return;
@@ -522,6 +590,7 @@ impl App {
             ConnectSelected => self.connect_selected(),
             NewConnection => self.form = Some(FormState::new()),
             DeleteConnection => self.confirm_delete_selected(),
+            EditConnection => self.edit_selected(),
             EditorNewline => {
                 self.exit_history_browse();
                 self.editor.newline();
@@ -559,6 +628,7 @@ impl App {
 
             FormSave => self.save_form(),
             FormCancel => self.form = None,
+            FormTestConnection => self.test_connection(),
             FormFieldNext => self.form_field_next(1),
             FormFieldPrev => self.form_field_next(-1),
             FormFieldLeft => self.form_field_left(),
@@ -927,7 +997,7 @@ impl App {
         );
         let db = db.boxed_clone();
         self.pending_cell_update = Some((edit.abs_row, edit.col, edit.raw_value));
-        self.rx = Some(spawn_job(Job::UpdateCell(db, sql)));
+        self.rx = Some(spawn_job(Job::UpdateCell(db, sql, self.exec_ctx(false))));
         self.running_query = true;
         self.status = "Updating cell…".into();
     }
@@ -937,6 +1007,76 @@ impl App {
         self.status = "Edit cancelled.".into();
     }
 
+    fn edit_selected(&mut self) {
+        if let Some(conn) = self.config.connections.get(self.conn_cursor).cloned() {
+            self.form = Some(FormState::from_connection(self.conn_cursor, &conn));
+            self.status = "Editing connection — Enter to save, Esc to cancel.".into();
+        }
+    }
+
+    fn test_connection(&mut self) {
+        let Some(form) = self.form.as_ref() else {
+            return;
+        };
+        let port: u16 = form.fields[2].parse().unwrap_or(3306);
+        let edit_index = form.edit_index;
+        let fields = form.fields.clone();
+        let kind = edit_index
+            .and_then(|i| self.config.connections.get(i))
+            .map(|c| c.kind.clone())
+            .unwrap_or_else(|| "mysql".into());
+        let conn = Connection {
+            name: fields[0].clone(),
+            kind,
+            host: fields[1].clone(),
+            port,
+            username: fields[3].clone(),
+            password: fields[4].clone(),
+            database: fields[5].clone(),
+        };
+        // ponytail: reuse the Ping job — open + SELECT 1. Best-effort: a fresh
+        // pool is built just to test; cheap for a one-shot TUI ping.
+        match db::open(&conn, self.config.query_timeout()) {
+            Ok(db) => {
+                self.testing_connection = true;
+                self.running_query = true;
+                self.rx = Some(spawn_job(Job::Ping(db, conn.name)));
+                self.status = "Testing connection…".into();
+            }
+            Err(e) => self.status = format!("Open failed: {e}"),
+        }
+    }
+
+    fn cancel_query(&mut self) {
+        let id = self.cancel.conn_id();
+        if id == 0 {
+            self.status = "Nothing running to cancel.".into();
+            return;
+        }
+        let Some(db) = self.db.as_ref() else {
+            self.status = "Not connected.".into();
+            return;
+        };
+        let db = db.boxed_clone();
+        // ponytail: detached side-conn sends KILL QUERY; best-effort (needs
+        // PROCESS/SUPER). The worker's query errors out → apply_job shows
+        // "Query cancelled." once the result arrives.
+        std::thread::spawn(move || {
+            let _ = db.kill_query(id);
+        });
+        self.cancel_requested = true;
+        self.status = "Cancelling query…".into();
+    }
+
+    /// ponytail: one helper builds the per-exec context from config so every
+    /// execute_script call shares cancel + row-cap wiring.
+    fn exec_ctx(&self, readable_binary: bool) -> ExecCtx {
+        ExecCtx {
+            cancel: self.cancel.clone(),
+            readable_binary,
+            limit: self.config.select_limit,
+        }
+    }
     fn recall_history(&mut self, older: bool) {
         if self.history.is_empty() {
             return;
