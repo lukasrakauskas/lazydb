@@ -6,17 +6,17 @@ Strengths worth preserving: trait-based DB layer, view-aware keymap, background 
 
 ## P0 - Correctness and safety (before anything else)
 
-- [ ] Fix `save_form()` status bug: error message from a failed save is overwritten by "Saved."
+- [x] Fix `save_form()` status bug: error message from a failed save is overwritten by "Saved."
       (`src/app/mod.rs`).
-- [ ] Escape/validate table names in `primary_keys()` - table name is interpolated directly
+- [x] Escape/validate table names in `primary_keys()` - table name is interpolated directly
       into SQL (`src/db/mysql.rs`). Use parameterized query against INFORMATION_SCHEMA.
-- [ ] Confirmation prompt before deleting a connection (`d` currently deletes instantly).
-- [ ] Harden the destructive-query guard: cover UPDATE without WHERE, multi-statement
+- [x] Confirmation prompt before deleting a connection (`d` currently deletes instantly).
+- [x] Harden the destructive-query guard: cover UPDATE without WHERE, multi-statement
       scripts where only one statement is destructive.
-- [ ] Replace naive `;` statement splitting with a tokenizer-aware splitter (strings,
+- [x] Replace naive `;` statement splitting with a tokenizer-aware splitter (strings,
       comments, DELIMITER). This silently corrupts real-world scripts today.
-- [ ] Report script preload failures (`lazydb missing.sql` currently fails silently).
-- [ ] Fix LICENSE copyright holder (currently "The Bootstrap Authors" placeholder).
+- [x] Report script preload failures (`lazydb missing.sql` currently fails silently).
+- [x] Fix LICENSE copyright holder (currently "The Bootstrap Authors" placeholder).
 
 ## P1 - Core gaps that block daily-driver use
 
