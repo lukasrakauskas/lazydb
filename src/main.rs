@@ -5,6 +5,7 @@ mod db;
 mod editor;
 mod filter;
 mod highlight;
+mod log;
 mod shortcuts;
 mod theme;
 mod ui;
@@ -38,6 +39,18 @@ impl Drop for Guard {
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    // ponytail: hand-rolled --log-file scan, no clap. --help/--version is a
+    // separate P2 item. Strips the flag (and its value) so the existing
+    // `lazydb script.sql` positional logic below still works unchanged.
+    let (log_file, args) = parse_log_file(args);
+    if let Some(path) = log_file {
+        crate::log::init(&path).unwrap_or_else(|e| {
+            eprintln!("lazydb: cannot open log file '{path}': {e}");
+            std::process::exit(1);
+        });
+        let script = if args.len() >= 2 { &args[1] } else { "" };
+        crate::log::info("start", &[("script", script)]);
+    }
     let mut app = app::App::load()?;
     // ponytail: optional `lazydb path/to/script.sql` preloads the editor.
     if args.len() >= 2 {
@@ -66,4 +79,27 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     app::run(&mut terminal, app)
+}
+
+/// Extract `--log-file <path>` / `--log-file=<path>` from argv, returning the
+/// requested path (if any) and the remaining args with the flag stripped.
+fn parse_log_file(args: Vec<String>) -> (Option<String>, Vec<String>) {
+    let mut log_file: Option<String> = None;
+    let mut out: Vec<String> = Vec::with_capacity(args.len());
+    let mut iter = args.into_iter();
+    if let Some(prog) = iter.next() {
+        out.push(prog);
+    }
+    while let Some(arg) = iter.next() {
+        if arg == "--log-file" {
+            if let Some(val) = iter.next() {
+                log_file = Some(val);
+            }
+        } else if let Some(val) = arg.strip_prefix("--log-file=") {
+            log_file = Some(val.to_string());
+        } else {
+            out.push(arg);
+        }
+    }
+    (log_file, out)
 }

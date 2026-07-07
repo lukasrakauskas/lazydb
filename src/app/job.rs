@@ -25,7 +25,11 @@ pub fn spawn_job(job: Job) -> Receiver<JobResult> {
         let res = match job {
             Job::Ping(db, name) => match db.ping() {
                 Ok(()) => JobResult::Ping(Ok(name)),
-                Err(e) => JobResult::Ping(Err(e.to_string())),
+                Err(e) => {
+                    let s = e.to_string();
+                    crate::log::error("job_ping_err", &[("err", &s)]);
+                    JobResult::Ping(Err(s))
+                }
             },
             Job::Query(db, sql, readable_binary) => {
                 let start = std::time::Instant::now();
@@ -34,7 +38,11 @@ pub fn spawn_job(job: Job) -> Receiver<JobResult> {
                         r.elapsed_ms = start.elapsed().as_millis();
                         JobResult::Query(Ok(r))
                     }
-                    Err(e) => JobResult::Query(Err(e.to_string())),
+                    Err(e) => {
+                        let s = e.to_string();
+                        crate::log::error("job_query_err", &[("err", &s)]);
+                        JobResult::Query(Err(s))
+                    }
                 }
             }
             Job::Schema(db) => match db.schema() {

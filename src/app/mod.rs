@@ -130,6 +130,7 @@ impl App {
         let conn = self.config.connections[self.conn_cursor].clone();
         match db::open(&conn) {
             Ok(db) => {
+                crate::log::info("connect", &[("name", &conn.name)]);
                 self.pending_db = Some(db.boxed_clone());
                 self.rx = Some(spawn_job(Job::Ping(db, conn.name.clone())));
                 self.running_query = true;
@@ -193,6 +194,8 @@ impl App {
         }
         self.history_cursor = None;
         self.history_draft = None;
+        let head: String = sql.chars().take(120).collect();
+        crate::log::info("query", &[("sql_head", &head)]);
         self.rx = Some(spawn_job(Job::Query(db, sql, readable_binary)));
         self.running_query = true;
         self.query_start = Some(Instant::now());
@@ -258,6 +261,9 @@ impl App {
             },
             JobResult::Query(r) => match r {
                 Ok(er) => {
+                    let ms = er.elapsed_ms.to_string();
+                    let rows = er.rows.len().to_string();
+                    crate::log::info("query_done", &[("ms", &ms), ("rows", &rows)]);
                     self.output = Output::Table {
                         columns: er.columns,
                         rows: er.rows,
@@ -268,6 +274,7 @@ impl App {
                     self.query_start = None;
                 }
                 Err(e) => {
+                    crate::log::error("query_err", &[("err", &e)]);
                     self.output = Output::Message(format!("Error: {e}"));
                     self.status = "Query failed.".into();
                     self.query_start = None;
