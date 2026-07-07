@@ -87,6 +87,22 @@ Strengths worth preserving: trait-based DB layer, view-aware keymap, background 
 - [ ] CONTRIBUTING.md + short architecture doc (the trait/job/keymap design deserves
       a paragraph each).
 
+## Leftover ideas from v1 roadmap
+
+Candidates from the original ROADMAP.md not yet re-prioritized into a tier above.
+
+- [ ] Saved queries - name a snippet, persist to `~/.config/lazydb/snippets.toml`
+      (mirrors the `Config` pattern), load via a picker. Good for the 5 queries everyone
+      runs daily.
+- [ ] Transaction control - explicit begin/commit/rollback hotkeys + autocommit toggle.
+      MySQL is autocommit-by-default; the toggle matters once multi-statement scripts
+      run. Needs a `set_autocommit` method on `Database`.
+- [ ] Row counts in schema browser - annotate each table with an estimated row count
+      (`SHOW TABLE STATUS` / `pg_class.reltuples` / `sqlite_stat1`).
+- [ ] SSH tunneling - connect to DBs behind a bastion. Adds a dep (`russh` or shell out
+      to `ssh -L`) and connection lifecycle complexity. High value for remote DBs;
+      basically a second product.
+
 ## Deliberately out of scope for now
 
 - Multiple simultaneous connections / tabs - large state refactor, low demand at this stage.
