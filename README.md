@@ -2,7 +2,7 @@
 
 A minimal lazygit-style TUI for databases. Built with Rust + ratatui.
 
-Currently supports **MySQL**. The DB layer is a single trait (`src/db/mod.rs`),
+Supports **MySQL** and **PostgreSQL**. The DB layer is a single trait (`src/db/mod.rs`),
 so adding a backend = one `match` arm in `db::open` + one impl module.
 
 ## Features
@@ -34,7 +34,7 @@ cargo run -- query.sql
 | `PgUp`/`PgDn` | scroll the viewport a page (Results; cursor stays) · `Home`/`End` jump the cursor to first/last row |
 | mouse wheel / trackpad | scroll the viewport (hover the Results pane); the cell cursor stays put |
 | `Enter` (Connections) | connect to selected |
-| `n` | new connection form (`Enter` save, `Esc` cancel, `Tab` next field) |
+| `n` | new connection form (`Enter` save, `Esc` cancel, `Tab` next field, `Ctrl+K` cycle DB type, `Ctrl+T` test) |
 | `f` | features modal (`Space` toggle, `j/k` move, `Esc`/`f`/`q` close) — not while editing |
 | `d` | delete selected connection |
 | `Enter` / `l` (Schema) | expand table → `rows` / `columns` / `constraints` / `indexes`; selecting one prefills + runs the query · `h` collapse |
@@ -53,7 +53,8 @@ Queries run on a background thread so the UI stays responsive.
 
 1. Implement `Database` in `src/db/<name>.rs` (`ping`, `execute_script`, `boxed_clone`).
 2. Add `pub mod <name>;` and a match arm in `db::open`.
-3. Set `kind` on the connection (the form hardcodes `"mysql"` — generalize when a 2nd backend lands).
+3. Set `kind` on the connection — the form's Type row (`Ctrl+K`) cycles `FormState::KINDS`;
+   add the string there + a `default_port` arm + an impl module.
 
 ## Known limitations (ponytail: deliberate minimal scope)
 
@@ -61,3 +62,6 @@ Queries run on a background thread so the UI stays responsive.
 - Only the first result set's columns are displayed; later sets in a multi-statement
   run contribute only their `rows_affected`.
 - Connection passwords are stored in plaintext in the config file.
+- PostgreSQL uses the text protocol (`simple_query`), which materializes the whole result
+  set before the row-limit guard truncates (MySQL streams and stops early); a very large
+  SELECT still downloads fully. Upgrade path: binary-protocol streaming.

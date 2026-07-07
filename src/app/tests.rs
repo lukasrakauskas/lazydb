@@ -98,21 +98,74 @@ fn schema_rows_expand_to_four_options() {
 #[test]
 fn schema_query_generates_correct_sql() {
     use super::{SchemaOpt, schema_query};
+    // mysql arm
     assert_eq!(
-        schema_query("users", SchemaOpt::Rows),
+        schema_query("users", SchemaOpt::Rows, "mysql"),
         "SELECT * FROM `users` LIMIT 100;"
     );
     assert_eq!(
-        schema_query("users", SchemaOpt::Columns),
+        schema_query("users", SchemaOpt::Columns, "mysql"),
         "SHOW FULL COLUMNS FROM `users`;"
     );
     assert_eq!(
-        schema_query("users", SchemaOpt::Indexes),
+        schema_query("users", SchemaOpt::Indexes, "mysql"),
         "SHOW INDEX FROM `users`;"
     );
-    let c = schema_query("users", SchemaOpt::Constraints);
+    let c = schema_query("users", SchemaOpt::Constraints, "mysql");
     assert!(c.contains("TABLE_CONSTRAINTS"));
     assert!(c.contains("TABLE_NAME = 'users'"));
+    // postgres arm: double-quoted identifier, catalog queries.
+    assert_eq!(
+        schema_query("users", SchemaOpt::Rows, "postgres"),
+        "SELECT * FROM \"users\" LIMIT 100;"
+    );
+    assert!(
+        schema_query("users", SchemaOpt::Columns, "postgres")
+            .contains("information_schema.columns")
+    );
+    assert!(schema_query("users", SchemaOpt::Indexes, "postgres").contains("pg_indexes"));
+}
+
+#[test]
+fn build_update_sql_quotes_per_backend() {
+    use super::build_update_sql;
+    let pks = vec!["id".to_string()];
+    let vals = vec!["7".to_string()];
+    // mysql: backtick identifiers.
+    assert_eq!(
+        build_update_sql("t", "name", "a'b", &pks, &vals, "mysql"),
+        "UPDATE `t` SET `name` = 'a''b' WHERE `id` = '7'"
+    );
+    // postgres: double-quote identifiers, same value escaping.
+    assert_eq!(
+        build_update_sql("t", "name", "a'b", &pks, &vals, "postgres"),
+        "UPDATE \"t\" SET \"name\" = 'a''b' WHERE \"id\" = '7'"
+    );
+    // a double-quote in a postgres identifier is doubled.
+    assert_eq!(
+        build_update_sql("a\"b", "c", "x", &pks, &vals, "postgres"),
+        "UPDATE \"a\"\"b\" SET \"c\" = 'x' WHERE \"id\" = '7'"
+    );
+}
+
+#[test]
+fn form_cycle_kind_swaps_port_and_wraps() {
+    use super::FormState;
+    let mut f = FormState::new();
+    assert_eq!(f.kind, "mysql");
+    assert_eq!(f.fields[2], "3306");
+    // cycling to postgres flips the default port 3306→5432.
+    f.cycle_kind();
+    assert_eq!(f.kind, "postgres");
+    assert_eq!(f.fields[2], "5432");
+    // a user-edited port is preserved across the cycle.
+    f.fields[2] = "6543".into();
+    f.cycle_kind();
+    assert_eq!(f.kind, "mysql");
+    assert_eq!(f.fields[2], "6543");
+    // wraps mysql→postgres→mysql.
+    f.cycle_kind();
+    assert_eq!(f.kind, "postgres");
 }
 
 #[test]
@@ -524,6 +577,7 @@ fn form_from_connection_prefills_fields() {
     };
     let f = super::FormState::from_connection(2, &c);
     assert_eq!(f.edit_index, Some(2));
+    assert_eq!(f.kind, "mysql");
     assert_eq!(f.fields[0], "prod");
     assert_eq!(f.fields[1], "db.example.com");
     assert_eq!(f.fields[2], "3307");

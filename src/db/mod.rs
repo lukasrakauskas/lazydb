@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 pub mod mysql;
+pub mod postgres;
 pub mod sql;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Connection {
@@ -65,8 +66,12 @@ pub struct ExecCtx {
 }
 
 /// One trait, one impl per backend. New DB = a match arm in `open` + a module.
-/// ponytail: only mysql wired; postgres/sqlite later = new arm + impl.
+/// ponytail: mysql + postgres wired; sqlite later = new arm + impl.
 pub trait Database: Send + 'static {
+    /// Backend identifier ("mysql" / "postgres" / …). Used to pick
+    /// backend-specific SQL (schema-detail queries, identifier quoting) at the
+    /// call site without a parallel App field — the backend knows its own kind.
+    fn kind(&self) -> &str;
     fn ping(&self) -> Result<()>;
     fn execute_script(&self, sql: &str, ctx: &ExecCtx) -> Result<ExecutionResult>;
     /// Table → its columns, in ordinal order. Used for schema-aware completion.
@@ -82,6 +87,7 @@ pub fn open(conn: &Connection, read_timeout: Option<Duration>) -> Result<Box<dyn
     let conn = resolve_connection_env(conn);
     match conn.kind.as_str() {
         "mysql" => Ok(mysql::Mysql::open(&conn, read_timeout)?.boxed_clone()),
+        "postgres" => Ok(postgres::Postgres::open(&conn, read_timeout)?.boxed_clone()),
         other => Err(anyhow::anyhow!("unsupported db kind: {other}")),
     }
 }

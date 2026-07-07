@@ -119,6 +119,7 @@ pub enum Action {
     FormFieldHome,
     FormFieldEnd,
     FormFieldBackspace,
+    FormCycleKind,
     // features modal
     FeaturesClose,
     FeaturesNext,
@@ -726,6 +727,14 @@ static FORM: &[Binding] = &[
         keys: &[ctrl('t', "Ctrl+T")],
         label: "test",
         action: Action::FormTestConnection,
+        hidden: false,
+    },
+    Binding {
+        // ponytail: Ctrl+K cycles the Type row (Kind). One key, wraps; with
+        // 2 backends it's a toggle. Add to KINDS to extend.
+        keys: &[ctrl('k', "Ctrl+K")],
+        label: "type",
+        action: Action::FormCycleKind,
         hidden: false,
     },
 ];

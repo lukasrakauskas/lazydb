@@ -28,9 +28,9 @@ Strengths worth preserving: trait-based DB layer, view-aware keymap, background 
       connection fields are resolved from the environment at open time (unset →
       left literal so a missing secret is visible). OS keychain (keyring crate) is
       the remaining upgrade.
-- [ ] DB type picker in the connection form (currently hardcoded `"mysql"`).
-      Deferred: a picker with one wired backend is speculative UI; add with the
-      second backend.
+- [x] DB type picker in the connection form (was hardcoded `"mysql"`). The
+      form's Type row cycles via `Ctrl+K` (`FormState::KINDS`); the default port
+      auto-swaps with the kind. Landed with the postgres backend.
 - [x] Test-connection button in the form (reuse existing Ping job).  `Ctrl+T` in
       the form opens + pings; result shows in the status line.
 - [ ] SSL/TLS options.
@@ -51,9 +51,48 @@ Strengths worth preserving: trait-based DB layer, view-aware keymap, background 
 
 ### Second backend
 
-- [ ] PostgreSQL. The `Database` trait exists; this validates the abstraction and roughly
-      doubles the addressable audience. SQLite after (easy win: file-path-only connections,
-      great for demos and tests).
+- [x] PostgreSQL. The `Database` trait now has two impls (`mysql`, `postgres`);
+      `db::open` matches on `kind`. Shared single `Client` behind a `Mutex` (one
+      query at a time), query timeout via server-side `statement_timeout`, cancel via
+      `pg_cancel_backend` on a side connection. SQLite next (file-path-only, easy).
+
+#### PostgreSQL — deliberate shortcuts (upgrade paths)
+Each is a `ponytail:` comment in `src/db/postgres.rs` (the last one in
+`src/app/util.rs`); listed here so they're tracked, not lost. Ceilings/upgrades:
+
+- [ ] Streaming row cap. `simple_query` (text protocol) materializes the whole
+      result before `select_limit` truncates — a huge SELECT downloads fully,
+      unlike mysql which streams and stops early. Upgrade: binary-protocol
+      `query_raw` / `RowIter` for a streaming cap.
+- [ ] Connection pool. One shared `Client` behind a `Mutex` (one query at a
+      time, matches the TUI's usage). Upgrade: `r2d2` pool if concurrent
+      queries ever run.
+- [ ] Multi-schema browsing. `schema()` and `primary_keys()` filter
+      `current_schema()` only — tables in other search_path schemas don't
+      appear. Upgrade: scan `current_schemas(false)` minus the system schemas;
+      pass an explicit schema to `primary_keys` if needed.
+- [ ] Structured index view. The schema pane's Indexes uses `pg_indexes`
+      (indexname + indexdef string), not a cols/unique breakdown. Upgrade:
+      `pg_index` join for a structured view.
+- [ ] Configurable connect timeout. Hardcoded 10s cap so a firewalled host
+      can't hang the worker (a hung connect can't be cancelled — `kill_query`
+      opens a side conn to the same dead host). Upgrade: per-connection or
+      config-driven.
+- [ ] Error detail. `pg_err` surfaces the server message only (no
+      `detail()`/`hint()`/SQLSTATE `code()`) — postgres `Error::Display` is
+      bare "db error" otherwise. Upgrade: include when a bare message stops
+      being enough.
+- [ ] `readable_binary` parity. No-op on postgres: text-protocol bytea already
+      renders as `\x..` hex (mysql needs it for its `Value` enum). Only
+      relevant again if we move to the binary protocol (raw bytea bytes).
+- [ ] Quoted-identifier cell edit. `extract_table_name` (`src/app/util.rs`)
+      only understands backtick-quoted identifiers (mysql); a postgres query
+      like `SELECT * FROM "MixedCase"` won't yield a table name, so cell-edit
+      can't build the UPDATE. Upgrade: also strip a leading `"`.
+- [ ] SSL/TLS. Built with `NoTls`; remote/cloud Postgres usually needs it.
+      Already tracked above ("SSL/TLS options") — postgres makes it concrete.
+- [ ] SQLite. The natural next backend; `FormState::KINDS` + a `default_port`
+      arm + an `open` arm + one impl module is the whole addition.
 
 ## P2 - UX polish
 

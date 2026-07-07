@@ -739,15 +739,25 @@ fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .title(if form.edit_index.is_some() {
-            "Edit Connection  (Enter: save, Esc: cancel, Tab: next, Ctrl+T: test)"
+            "Edit Connection  (Enter: save, Esc: cancel, Tab: next, Ctrl+K: type, Ctrl+T: test)"
         } else {
-            "New Connection  (Enter: save, Esc: cancel, Tab: next, Ctrl+T: test)"
+            "New Connection  (Enter: save, Esc: cancel, Tab: next, Ctrl+K: type, Ctrl+T: test)"
         })
         .border_style(theme::FORM_BORDER);
     let inner = b.inner(pop);
     f.render_widget(b, pop);
 
     let mut lines: Vec<Line> = Vec::new();
+    // ponytail: Type row is a cyclable picker (Ctrl+K), not a text field, so
+    // it sits above the LABELS rows and isn't part of Tab navigation — keeps
+    // the text-field indexing/cursor math untouched. The ◄ ► hint signals it.
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:>9}: ", "Type"), theme::FORM_LABEL),
+        Span::styled(
+            format!("{}  ◄ Ctrl+K ►", form.kind),
+            theme::FORM_ACTIVE_FIELD,
+        ),
+    ]));
     for (i, label) in FormState::LABELS.iter().enumerate() {
         let val = if i == 4 {
             "*".repeat(form.fields[i].len())
@@ -766,8 +776,9 @@ fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
     }
     f.render_widget(Paragraph::new(lines), inner);
 
+    // Text fields start one row below the Type row.
     let cx = inner.x + 11 + form.cursor as u16;
-    let cy = inner.y + form.active as u16;
+    let cy = inner.y + 1 + form.active as u16;
     if cx < inner.right() && cy < inner.bottom() {
         f.set_cursor_position((cx, cy));
     }

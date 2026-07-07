@@ -231,15 +231,12 @@ impl App {
             self.status = "Name is required.".into();
             return;
         }
-        let port: u16 = form.fields[2].parse().unwrap_or(3306);
+        let kind = form.kind.clone();
+        let port: u16 = form.fields[2]
+            .parse()
+            .unwrap_or(FormState::default_port(&kind));
         let edit_index = form.edit_index;
         let fields = form.fields.clone();
-        // ponytail: kind isn't a form field; preserve it from the connection
-        // being edited, or default to mysql for new connections.
-        let kind = edit_index
-            .and_then(|i| self.config.connections.get(i))
-            .map(|c| c.kind.clone())
-            .unwrap_or_else(|| "mysql".into());
         let conn = Connection {
             name: fields[0].clone(),
             kind,
@@ -636,6 +633,7 @@ impl App {
             FormFieldHome => self.form_field_home(),
             FormFieldEnd => self.form_field_end(),
             FormFieldBackspace => self.form_field_backspace(),
+            FormCycleKind => self.form_cycle_kind(),
 
             FeaturesClose => self.features_open = false,
             FeaturesNext => self.features_move(1),
@@ -834,7 +832,8 @@ impl App {
                 self.schema_expanded.insert(t);
             }
             Some(SchemaEntry::Leaf { table, opt }) => {
-                let sql = schema_query(&table, opt);
+                let kind = self.db.as_ref().map(|d| d.kind()).unwrap_or("mysql");
+                let sql = schema_query(&table, opt, kind);
                 self.editor = Editor::from_text(sql);
                 self.focus = Focus::Results;
                 self.run_query();
@@ -895,6 +894,12 @@ impl App {
         {
             f.cursor -= 1;
             f.fields[f.active].remove(f.cursor);
+        }
+    }
+
+    fn form_cycle_kind(&mut self) {
+        if let Some(f) = self.form.as_mut() {
+            f.cycle_kind();
         }
     }
 
@@ -994,6 +999,7 @@ impl App {
             &edit.raw_value,
             &edit.pk_cols,
             &edit.pk_vals,
+            db.kind(),
         );
         let db = db.boxed_clone();
         self.pending_cell_update = Some((edit.abs_row, edit.col, edit.raw_value));
@@ -1018,13 +1024,11 @@ impl App {
         let Some(form) = self.form.as_ref() else {
             return;
         };
-        let port: u16 = form.fields[2].parse().unwrap_or(3306);
-        let edit_index = form.edit_index;
+        let kind = form.kind.clone();
+        let port: u16 = form.fields[2]
+            .parse()
+            .unwrap_or(FormState::default_port(&kind));
         let fields = form.fields.clone();
-        let kind = edit_index
-            .and_then(|i| self.config.connections.get(i))
-            .map(|c| c.kind.clone())
-            .unwrap_or_else(|| "mysql".into());
         let conn = Connection {
             name: fields[0].clone(),
             kind,

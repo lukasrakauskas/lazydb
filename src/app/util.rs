@@ -86,14 +86,45 @@ fn strip_comments_and_strings(sql: &str) -> String {
     out
 }
 
-pub fn schema_query(table: &str, opt: SchemaOpt) -> String {
-    match opt {
-        SchemaOpt::Rows => format!("SELECT * FROM `{table}` LIMIT 100;"),
-        SchemaOpt::Columns => format!("SHOW FULL COLUMNS FROM `{table}`;"),
-        SchemaOpt::Constraints => format!(
-            "SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table}';"
-        ),
-        SchemaOpt::Indexes => format!("SHOW INDEX FROM `{table}`;"),
+/// SQL for a schema-pane detail view, backend-specific. `kind` is the
+/// connected `Database::kind()`. mysql uses SHOW/INFORMATION_SCHEMA + DATABASE();
+// postgres uses the catalog + current_schema() (no DATABASE() equivalent).
+/// ponytail: identifier quoting differs (`mysql` backtick vs `postgres`
+/// double-quote) and is escaped; table names from the schema tree are the
+/// stored (lowercased-if-unquoted) form, so quoting round-trips.
+pub fn schema_query(table: &str, opt: SchemaOpt, kind: &str) -> String {
+    if kind == "postgres" {
+        let t = table.replace('"', "\"\"");
+        match opt {
+            SchemaOpt::Rows => format!("SELECT * FROM \"{t}\" LIMIT 100;"),
+            SchemaOpt::Columns => format!(
+                "SELECT column_name, data_type, is_nullable, column_default \
+                 FROM information_schema.columns \
+                 WHERE table_schema = current_schema() AND table_name = '{table}' \
+                 ORDER BY ordinal_position;"
+            ),
+            SchemaOpt::Constraints => format!(
+                "SELECT constraint_name, constraint_type \
+                 FROM information_schema.table_constraints \
+                 WHERE table_schema = current_schema() AND table_name = '{table}';"
+            ),
+            // ponytail: postgres has no `SHOW INDEX`; pg_indexes gives the
+            // definition string (indexname + indexdef) which renders the same
+            // role. upgrade: pg_index for a structured (cols, unique) view.
+            SchemaOpt::Indexes => format!(
+                "SELECT indexname, indexdef FROM pg_indexes \
+                 WHERE schemaname = current_schema() AND tablename = '{table}';"
+            ),
+        }
+    } else {
+        match opt {
+            SchemaOpt::Rows => format!("SELECT * FROM `{table}` LIMIT 100;"),
+            SchemaOpt::Columns => format!("SHOW FULL COLUMNS FROM `{table}`;"),
+            SchemaOpt::Constraints => format!(
+                "SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table}';"
+            ),
+            SchemaOpt::Indexes => format!("SHOW INDEX FROM `{table}`;"),
+        }
     }
 }
 
@@ -110,20 +141,37 @@ pub fn extract_table_name(sql: &str) -> Option<String> {
     Some(table.to_string())
 }
 
+/// Identifier quote char for a backend (`mysql` backtick, `postgres`
+/// double-quote). Used by `build_update_sql` so cell-edit emits valid SQL
+/// per backend.
+fn ident_quote(kind: &str) -> char {
+    if kind == "postgres" { '"' } else { '`' }
+}
+
+/// Quote + escape an identifier for the backend's quote char.
+fn quote_ident(name: &str, q: char) -> String {
+    let escaped = name.replace(q, &format!("{q}{q}"));
+    format!("{q}{escaped}{q}")
+}
+
 pub fn build_update_sql(
     table: &str,
     col: &str,
     new_val: &str,
     pk_cols: &[String],
     pk_vals: &[String],
+    kind: &str,
 ) -> String {
+    let q = ident_quote(kind);
     format!(
-        "UPDATE `{table}` SET `{col}` = '{}' WHERE {}",
+        "UPDATE {} SET {} = '{}' WHERE {}",
+        quote_ident(table, q),
+        quote_ident(col, q),
         sql_escape(new_val),
         pk_cols
             .iter()
             .zip(pk_vals.iter())
-            .map(|(pc, pv)| format!("`{pc}` = '{}'", sql_escape(pv)))
+            .map(|(pc, pv)| format!("{} = '{}'", quote_ident(pc, q), sql_escape(pv)))
             .collect::<Vec<_>>()
             .join(" AND ")
     )

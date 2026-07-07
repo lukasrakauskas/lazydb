@@ -37,6 +37,10 @@ impl Mysql {
 }
 
 impl Database for Mysql {
+    fn kind(&self) -> &str {
+        "mysql"
+    }
+
     fn ping(&self) -> Result<()> {
         let mut conn = self.pool.get_conn()?;
         let _: Option<i64> = conn.query_first("SELECT 1")?;
