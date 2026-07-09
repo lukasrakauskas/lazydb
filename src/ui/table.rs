@@ -115,7 +115,8 @@ pub(crate) fn draw_table(
     for &c in &vis {
         header_cells.push(columns[c].clone());
     }
-    let header = Row::new(header_cells).style(Style::default().add_modifier(ratatui::style::Modifier::BOLD));
+    let header =
+        Row::new(header_cells).style(Style::default().add_modifier(ratatui::style::Modifier::BOLD));
 
     let first = scroll_row.min(rows.len().saturating_sub(1));
     let last_vis = (scroll_row + body_h).min(rows.len());

@@ -144,7 +144,8 @@ pub(crate) fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 
     if form.kind_picker.is_none() {
-        let cx = inner.x + 11
+        let cx = inner.x
+            + 11
             + if form.active == 0 {
                 form.kind.len() as u16
             } else {
@@ -162,14 +163,21 @@ pub(crate) fn draw_form(f: &mut Frame, form: &FormState, area: Rect) {
 }
 
 fn draw_form_kind_picker(f: &mut Frame, form: &FormState, pop: Rect) {
-    let Some(picker) = &form.kind_picker else { return };
+    let Some(picker) = &form.kind_picker else {
+        return;
+    };
     let n = picker.filtered.len().min(6);
     let w = 30u16.min(pop.width.saturating_sub(12));
     let h = 3 + n as u16;
     let x = (pop.x + 11).min(pop.right().saturating_sub(w));
     let y = (pop.y + 2).min(pop.bottom().saturating_sub(h));
 
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
     f.render_widget(Clear, rect);
 
     let b = Block::default()
@@ -254,7 +262,10 @@ pub(crate) fn draw_features(f: &mut Frame, app: &App, area: Rect) {
         };
         lines.push(Line::from(vec![
             Span::styled(format!(" {} ", if on { "[x]" } else { "[ ]" }), mark_style),
-            Span::styled(*name, Style::default().add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(
+                *name,
+                Style::default().add_modifier(ratatui::style::Modifier::BOLD),
+            ),
             Span::raw("  "),
             Span::styled(*desc, theme::FEATURE_DESC),
         ]));

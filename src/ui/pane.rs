@@ -10,9 +10,9 @@ use crate::app::{App, Focus, Output, SchemaEntry, SchemaOpt};
 use crate::highlight;
 use crate::theme;
 
+use super::block;
 use super::overlay::{draw_autocomplete, draw_edit_bar, draw_filter_bar};
 use super::table::draw_table;
-use super::block;
 
 pub(crate) fn draw_connections(f: &mut Frame, app: &App, area: Rect) {
     let items: Vec<ListItem> = app

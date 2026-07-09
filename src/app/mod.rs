@@ -919,22 +919,30 @@ impl App {
     }
 
     fn form_field_left(&mut self) {
-        if let Some(f) = self.form.as_mut() && f.active > 0 {
+        if let Some(f) = self.form.as_mut()
+            && f.active > 0
+        {
             f.cursor = f.cursor.saturating_sub(1);
         }
     }
     fn form_field_right(&mut self) {
-        if let Some(f) = self.form.as_mut() && f.active > 0 {
+        if let Some(f) = self.form.as_mut()
+            && f.active > 0
+        {
             f.cursor = (f.cursor + 1).min(f.fields[f.active - 1].len());
         }
     }
     fn form_field_home(&mut self) {
-        if let Some(f) = self.form.as_mut() && f.active > 0 {
+        if let Some(f) = self.form.as_mut()
+            && f.active > 0
+        {
             f.cursor = 0;
         }
     }
     fn form_field_end(&mut self) {
-        if let Some(f) = self.form.as_mut() && f.active > 0 {
+        if let Some(f) = self.form.as_mut()
+            && f.active > 0
+        {
             f.cursor = f.fields[f.active - 1].len();
         }
     }
@@ -980,8 +988,12 @@ impl App {
 
     fn form_kind_picker_select(&mut self) {
         let Some(form) = &mut self.form else { return };
-        let Some(picker) = form.kind_picker.take() else { return };
-        let Some(kind) = picker.selected_kind() else { return };
+        let Some(picker) = form.kind_picker.take() else {
+            return;
+        };
+        let Some(kind) = picker.selected_kind() else {
+            return;
+        };
         if form.fields[2] == FormState::default_port(&form.kind).to_string() {
             form.fields[2] = FormState::default_port(kind).to_string();
         }

@@ -965,7 +965,17 @@ mod tests {
     #[test]
     fn current_view_modal_wins_over_focus_and_autocomplete() {
         assert_eq!(
-            current_view(Focus::Editor, true, false, true, true, false, true, true, false),
+            current_view(
+                Focus::Editor,
+                true,
+                false,
+                true,
+                true,
+                false,
+                true,
+                true,
+                false
+            ),
             View::ConfirmDestructive
         );
         assert_eq!(
