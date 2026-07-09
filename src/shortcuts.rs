@@ -25,6 +25,7 @@ use crate::app::Focus;
 /// `Editor` (the completion popup) that overrides a few keys.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
+    Help,
     ConfirmDestructive,
     ConfirmDelete,
     Form,
@@ -61,6 +62,7 @@ pub enum Action {
     FocusResults,
     FocusSchema,
     ToggleKeyLog,
+    ToggleHelp,
     ToggleFeatures,
     // shared list nav — behavior is selected per-view by the handler
     MoveDown,
@@ -346,9 +348,15 @@ pub static COMMON_PANE: &[Binding] = &[
     },
     Binding {
         keys: &[ch('?', "?")],
+        label: "help",
+        action: Action::ToggleHelp,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ctrl_code(KeyCode::Char('?'), "Ctrl+?")],
         label: "key-log",
         action: Action::ToggleKeyLog,
-        hidden: false,
+        hidden: true,
     },
     Binding {
         keys: &[ch('f', "f")],
@@ -1090,6 +1098,15 @@ static KIND_PICKER: &[Binding] = &[
     // typed chars fall through to raw text input (picker query); no binding.
 ];
 
+static HELP: &[Binding] = &[
+    Binding {
+        keys: &[bare(KeyCode::Esc, "Esc"), ch('q', "q"), ch('?', "?")],
+        label: "close",
+        action: Action::ToggleHelp,
+        hidden: false,
+    },
+];
+
 static FEATURES: &[Binding] = &[
     Binding {
         keys: &[bare(KeyCode::Esc, "Esc"), ch('f', "f"), ch('q', "q")],
@@ -1159,6 +1176,7 @@ fn view_bindings(view: View) -> &'static [Binding] {
         View::ResultsRowInsert => RESULTS_ROW_INSERT,
         View::CellInspect => CELL_INSPECT,
         View::EditorSave => EDITOR_SAVE,
+        View::Help => HELP,
         View::Schema => SCHEMA,
         View::SchemaFilter => SCHEMA_FILTER,
         View::Form => FORM,
@@ -1215,8 +1233,11 @@ pub fn current_view(
     cell_inspect: bool,
     editor_save: bool,
     schema_filter_open: bool,
+    help: bool,
 ) -> View {
-    if confirm_destructive {
+    if help {
+        View::Help
+    } else if confirm_destructive {
         View::ConfirmDestructive
     } else if editor_save {
         View::EditorSave
@@ -1292,36 +1313,40 @@ mod tests {
             View::ConfirmDestructive
         );
         assert_eq!(
-            current_view(Focus::Editor, true, f, f, f, f, f, f, f, f, f, f, f, f),
+            current_view(Focus::Editor, true, f, f, f, f, f, f, f, f, f, f, f, f, f),
             View::Form
         );
         assert_eq!(
-            current_view(Focus::Editor, f, f, true, f, f, f, f, f, f, f, f, f, f),
+            current_view(Focus::Editor, f, f, true, f, f, f, f, f, f, f, f, f, f, f),
             View::Features
         );
         assert_eq!(
-            current_view(Focus::Editor, f, f, f, f, f, true, f, f, f, f, f, f, f),
+            current_view(Focus::Editor, f, f, f, f, f, true, f, f, f, f, f, f, f, f),
             View::EditorAutocomplete
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, f, f, f, f, f, f, f, f, f, f),
+            current_view(Focus::Results, f, f, f, f, f, f, f, f, f, f, f, f, f, f),
             View::Results
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, f, f, f, true, f, f, f, f, f, f),
+            current_view(Focus::Results, f, f, f, f, f, f, true, f, f, f, f, f, f, f),
             View::ResultsFilter
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, f, f, f, f, true, f, f, f, f, f),
+            current_view(Focus::Results, f, f, f, f, f, f, f, true, f, f, f, f, f, f),
             View::ResultsEdit
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, true, f, f, f, true, f, f, f, f, f),
+            current_view(Focus::Results, f, f, f, true, f, f, f, true, f, f, f, f, f, f),
             View::ConfirmDestructive
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, f, true, f, f, f, f, f, f, f, f),
+            current_view(Focus::Results, f, f, f, f, true, f, f, f, f, f, f, f, f, f),
             View::ConfirmDelete
+        );
+        assert_eq!(
+            current_view(Focus::Results, f, f, f, f, f, f, f, f, f, f, f, f, f, true),
+            View::Help
         );
     }
 

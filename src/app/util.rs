@@ -185,44 +185,13 @@ pub fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
     if cfg!(test) {
         return Ok(());
     }
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-    let cmd = if cfg!(target_os = "macos") {
-        ("pbcopy", Vec::<&str>::new())
-    } else if cfg!(target_os = "windows") {
-        ("clip", Vec::<&str>::new())
-    } else if std::path::Path::new("/usr/bin/wl-copy").exists() || which("wl-copy") {
-        ("wl-copy", Vec::<&str>::new())
-    } else if which("xclip") {
-        ("xclip", vec!["-selection", "clipboard"])
-    } else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "no clipboard tool found",
-        ));
-    };
-    let mut child = Command::new(cmd.0)
-        .args(&cmd.1)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-    if let Some(stdin) = child.stdin.as_mut() {
-        stdin.write_all(text.as_bytes())?;
-    }
-    child.wait()?;
-    Ok(())
-}
-
-fn which(prog: &str) -> bool {
-    if let Ok(path) = std::env::var("PATH") {
-        for dir in path.split(':') {
-            if std::path::Path::new(dir).join(prog).exists() {
-                return true;
-            }
-        }
-    }
-    false
+    // ponytail: arboard crate, falls back to shell-out on headless/disconnected
+    let mut ctx = arboard::Clipboard::new().map_err(|e| {
+        std::io::Error::other(e.to_string())
+    })?;
+    ctx.set_text(text).map_err(|e| {
+        std::io::Error::other(e.to_string())
+    })
 }
 
 pub fn row_to_json(columns: &[String], row: &[String]) -> String {

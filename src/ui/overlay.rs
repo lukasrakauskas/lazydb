@@ -532,3 +532,57 @@ pub(crate) fn draw_confirm_delete(f: &mut Frame, app: &App, area: Rect) {
     ];
     f.render_widget(Paragraph::new(msg).wrap(Wrap { trim: false }), inner);
 }
+
+pub(crate) fn draw_help(f: &mut Frame, _app: &App, area: Rect) {
+    use crate::shortcuts::{View, bar_bindings};
+    let w = 80.min(area.width);
+    let h = (area.height - 4).min(36);
+    let x = area.x + (area.width - w) / 2;
+    let y = area.y + (area.height - h) / 2;
+    let pop = Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, pop);
+    let b = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title("Help  (?/Esc/q: close)")
+        .border_style(theme::FEATURES_BORDER);
+    let inner = b.inner(pop);
+    f.render_widget(b, pop);
+
+    let views = [
+        View::Editor,
+        View::Results,
+        View::Schema,
+        View::Connections,
+        View::ResultsFilter,
+        View::ResultsEdit,
+        View::ResultsRowInsert,
+        View::CellInspect,
+        View::EditorAutocomplete,
+        View::Form,
+        View::KindPicker,
+        View::Features,
+        View::ConfirmDestructive,
+        View::ConfirmDelete,
+        View::EditorSave,
+    ];
+    let mut lines: Vec<Line> = Vec::new();
+    for v in &views {
+        let bs: Vec<_> = bar_bindings(*v).collect();
+        if bs.is_empty() {
+            continue;
+        }
+        let mut parts: Vec<Span> = vec![Span::styled(
+            format!("{:>24}", format!("{v:?}")),
+            theme::SHORTCUT_KEY,
+        )];
+        for b in &bs {
+            parts.push(Span::raw("  "));
+            parts.push(Span::styled(b.keys_display(), theme::SHORTCUT_KEY));
+            parts.push(Span::raw(" "));
+            parts.push(Span::styled(b.label, theme::SHORTCUT_LABEL));
+        }
+        lines.push(Line::from(parts));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+}

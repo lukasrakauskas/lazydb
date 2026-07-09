@@ -54,6 +54,7 @@ pub struct App {
     pub results_click_geom: Option<ResultsClickGeom>,
     pub result_filter: Option<ResultFilter>,
     pub filter_input_open: bool,
+    pub show_help: bool,
     pub features_open: bool,
     pub feature_cursor: usize,
     pub confirm_destructive: Option<String>,
@@ -124,6 +125,7 @@ impl App {
             results_click_geom: None,
             result_filter: None,
             filter_input_open: false,
+            show_help: false,
             features_open: false,
             feature_cursor: 0,
             confirm_destructive: None,
@@ -495,6 +497,7 @@ impl App {
             self.cell_inspect.is_some(),
             self.editor_save_input.is_some(),
             self.schema_filter_input_open,
+            self.show_help,
         );
         if self.running_query {
             let is_cancel = key.code == KeyCode::Esc
@@ -549,6 +552,7 @@ impl App {
                 self.focus = Focus::Schema;
             }
             ToggleKeyLog => self.debug_keys = !self.debug_keys,
+            ToggleHelp => self.show_help = !self.show_help,
             ToggleFeatures => {
                 self.features_open = true;
                 self.feature_cursor = 0;

@@ -39,8 +39,20 @@ impl Drop for Guard {
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    // ponytail: hand-rolled --log-file scan, no clap. --help/--version is a
-    // separate P2 item. Strips the flag (and its value) so the existing
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("Usage: lazydb [--log-file PATH] [SCRIPT]");
+        println!("  --log-file PATH   Log debug output to file");
+        println!("  --help, -h        Show this help");
+        println!("  --version, -V     Show version");
+        println!("  SCRIPT            SQL file to preload in editor");
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("lazydb {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    // ponytail: hand-rolled --log-file scan, no clap.
+    // Strips the flag (and its value) so the existing
     // `lazydb script.sql` positional logic below still works unchanged.
     let (log_file, args) = parse_log_file(args);
     if let Some(path) = log_file {
