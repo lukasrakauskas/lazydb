@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::{Connection, Database, ExecCtx, ExecutionResult};
+use super::{Connection, Database, ExecCtx, ExecutionResult, StatementResult};
 
 /// ponytail: one shared `Client` behind a `Mutex` (the TUI runs one query at a
 /// time — see `CancelSlot`), cloned via `Arc` so `boxed_clone` is cheap and
@@ -133,10 +133,7 @@ impl Database for Postgres {
 
     fn execute_script(&self, sql: &str, ctx: &ExecCtx) -> Result<ExecutionResult> {
         let mut client = self.client.lock().unwrap();
-        let mut columns: Vec<String> = Vec::new();
-        let mut rows: Vec<Vec<String>> = Vec::new();
-        let mut rows_affected = 0u64;
-        let mut truncated = false;
+        let mut all_results: Vec<StatementResult> = Vec::new();
         let limit = ctx.limit;
 
         for part in crate::db::sql::split_statements(sql) {
@@ -144,62 +141,65 @@ impl Database for Postgres {
             if part.is_empty() {
                 continue;
             }
-            // Record this connection's pid so the UI can pg_cancel_backend on
-            // cancel. Constant for the shared connection; no per-stmt roundtrip.
             ctx.cancel.set(self.pid);
             let msgs = client.simple_query(part).map_err(pg_err)?;
             ctx.cancel.clear();
 
-            // ponytail: simple_query materializes the whole result into a Vec
-            // (text protocol, no streaming), so `limit` caps the displayed rows
-            // vec, NOT client memory — a billion-row SELECT still downloads
-            // fully before truncation. mysql streams and stops early. upgrade:
-            // binary-protocol `query_raw` (RowIter) for a streaming cap.
+            let mut stmt_columns: Vec<String> = Vec::new();
+            let mut stmt_rows: Vec<Vec<String>> = Vec::new();
+            let mut stmt_affected = 0u64;
+            let mut stmt_truncated = false;
             let mut had_result_set = false;
+
             for m in &msgs {
                 match m {
                     postgres::SimpleQueryMessage::Row(r) => {
                         had_result_set = true;
-                        if columns.is_empty() {
-                            columns = r.columns().iter().map(|c| c.name().to_string()).collect();
+                        if stmt_columns.is_empty() {
+                            stmt_columns =
+                                r.columns().iter().map(|c| c.name().to_string()).collect();
                         }
                         if let Some(cap) = limit
-                            && rows.len() >= cap
+                            && stmt_rows.len() >= cap
                         {
-                            truncated = true;
+                            stmt_truncated = true;
                             continue;
                         }
                         let row: Vec<String> = (0..r.columns().len())
-                            .map(|i| {
-                                // ponytail: text protocol renders bytea as
-                                // `\x..` hex already, so readable_binary is a
-                                // no-op here (mysql needs it for its Value enum).
-                                r.get(i).map(String::from).unwrap_or_else(|| "NULL".into())
-                            })
+                            .map(|i| r.get(i).map(String::from).unwrap_or_else(|| "NULL".into()))
                             .collect();
-                        rows.push(row);
+                        stmt_rows.push(row);
                     }
-                    // ponytail: mirror mysql — rows_affected is for DML only
-                    // (a SELECT's row count lives in `rows.len()`); reporting
-                    // the SELECT command tag's count would double-show "N
-                    // affected" beside "N rows".
                     postgres::SimpleQueryMessage::CommandComplete(n) if !had_result_set => {
-                        rows_affected = *n;
+                        stmt_affected = *n;
                     }
                     _ => {}
                 }
             }
-            if truncated {
+            all_results.push(StatementResult {
+                columns: stmt_columns,
+                rows: stmt_rows,
+                rows_affected: stmt_affected,
+                truncated: stmt_truncated,
+            });
+            if stmt_truncated {
                 break;
             }
         }
 
+        let last = all_results.last().cloned().unwrap_or(StatementResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            rows_affected: 0,
+            truncated: false,
+        });
         Ok(ExecutionResult {
-            columns,
-            rows,
-            rows_affected,
+            columns: last.columns,
+            rows: last.rows,
+            rows_affected: last.rows_affected,
             elapsed_ms: 0,
-            truncated,
+            truncated: last.truncated,
+            all_results,
         })
     }
 

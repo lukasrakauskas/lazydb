@@ -8,6 +8,7 @@ ratatui = "0.30"
 crossterm = "0.28"
 mysql = { version = "25", default-features = false, features = ["minimal-rust"] }
 postgres = { version = "0.19", default-features = false }
+rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 anyhow = "1"

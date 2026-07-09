@@ -91,6 +91,8 @@ pub enum Action {
     CopyRowJson,
     CopyResultCsv,
     Deselect,
+    CycleResultNext,
+    CycleResultPrev,
     // results fuzzy filter (a transient input mode of the Results view)
     ToggleFilter,
     FilterAccept,
@@ -567,6 +569,18 @@ static RESULTS: &[Binding] = &[
         keys: &[ctrl('s', "Ctrl+S")],
         label: "copy CSV",
         action: Action::CopyResultCsv,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Tab, "Tab")],
+        label: "next-result",
+        action: Action::CycleResultNext,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::BackTab, "Shift+Tab")],
+        label: "prev-result",
+        action: Action::CycleResultPrev,
         hidden: false,
     },
 ];
@@ -1136,10 +1150,10 @@ mod tests {
             match_key(v, k(KeyCode::F(5), KeyModifiers::NONE)),
             Some(Action::RunQuery)
         );
-        // Tab → focus next (common), not a result nav key
+        // Tab → cycle result set (results-specific), not focus next
         assert_eq!(
             match_key(v, k(KeyCode::Tab, KeyModifiers::NONE)),
-            Some(Action::FocusNext)
+            Some(Action::CycleResultNext)
         );
         // unbound plain char falls through
         assert_eq!(

@@ -21,7 +21,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::autocomplete;
 use crate::config::{Config, Features};
-use crate::db::{self, CancelSlot, Connection, Database, ExecCtx};
+use crate::db::{self, CancelSlot, Connection, Database, ExecCtx, StatementResult};
 use crate::editor::Editor;
 use crate::filter::CellMatches;
 use crate::shortcuts::{self, Action, View};
@@ -74,6 +74,9 @@ pub struct App {
     cancel: CancelSlot,
     cancel_requested: bool,
     testing_connection: bool,
+    // ponytail: multi-statement result sets; active_result indexes into this.
+    all_results: Vec<StatementResult>,
+    active_result: usize,
 }
 
 impl App {
@@ -122,6 +125,8 @@ impl App {
             cancel: CancelSlot::new(),
             cancel_requested: false,
             testing_connection: false,
+            all_results: Vec::new(),
+            active_result: 0,
         })
     }
 
@@ -221,6 +226,8 @@ impl App {
         self.result_scroll_row = 0;
         self.result_cursor_col = 0;
         self.result_scroll_col = 0;
+        self.all_results = Vec::new();
+        self.active_result = 0;
     }
 
     fn save_form(&mut self) {
@@ -300,12 +307,25 @@ impl App {
                         let ms = er.elapsed_ms.to_string();
                         let rows = er.rows.len().to_string();
                         crate::log::info("query_done", &[("ms", &ms), ("rows", &rows)]);
+                        self.all_results = er.all_results;
+                        self.active_result = self.all_results.len().saturating_sub(1);
+                        let active = self.active_result;
+                        let r = self
+                            .all_results
+                            .get(active)
+                            .cloned()
+                            .unwrap_or(StatementResult {
+                                columns: er.columns,
+                                rows: er.rows,
+                                rows_affected: er.rows_affected,
+                                truncated: er.truncated,
+                            });
                         self.output = Output::Table {
-                            columns: er.columns,
-                            rows: er.rows,
-                            rows_affected: er.rows_affected,
+                            columns: r.columns,
+                            rows: r.rows,
+                            rows_affected: r.rows_affected,
                             elapsed_ms: er.elapsed_ms,
-                            truncated: er.truncated,
+                            truncated: r.truncated,
                         };
                         self.status = if cancelled {
                             "Query OK (cancel did not take effect).".into()
@@ -716,6 +736,8 @@ impl App {
                     edit.raw_value.remove(edit.cursor);
                 }
             }
+            CycleResultNext => self.cycle_result(1),
+            CycleResultPrev => self.cycle_result(-1),
         }
     }
 
@@ -833,6 +855,35 @@ impl App {
         self.filter_input_open = true;
         self.result_cursor_row = None;
         self.result_scroll_row = 0;
+    }
+
+    fn cycle_result(&mut self, dir: isize) {
+        let n = self.all_results.len();
+        if n <= 1 {
+            return;
+        }
+        let new = ((self.active_result as isize + dir).rem_euclid(n as isize)) as usize;
+        if let Some(r) = self.all_results.get(new) {
+            self.active_result = new;
+            self.output = Output::Table {
+                columns: r.columns.clone(),
+                rows: r.rows.clone(),
+                rows_affected: r.rows_affected,
+                elapsed_ms: 0,
+                truncated: r.truncated,
+            };
+            self.status = format!(
+                "Result set {}/{}  ·  {} rows  ·  {} affected",
+                new + 1,
+                n,
+                r.rows.len(),
+                r.rows_affected,
+            );
+            self.result_cursor_row = None;
+            self.result_scroll_row = 0;
+            self.result_cursor_col = 0;
+            self.result_scroll_col = 0;
+        }
     }
 
     fn clear_filter(&mut self) {
