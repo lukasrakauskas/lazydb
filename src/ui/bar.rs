@@ -20,6 +20,9 @@ pub(crate) fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
         app.autocomplete.is_some(),
         app.filter_input_open,
         app.edit_cell.is_some(),
+        app.export_input.is_some(),
+        app.row_insert.is_some(),
+        app.cell_inspect.is_some(),
     );
     let mut spans: Vec<Span> = vec![Span::raw(" ")];
     for (i, b) in shortcuts::bar_bindings(view).enumerate() {

@@ -62,6 +62,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.confirm_delete.is_some() {
         overlay::draw_confirm_delete(f, app, f.area());
     }
+
+    if app.cell_inspect.is_some() {
+        overlay::draw_cell_inspect(f, app, f.area());
+    }
+
+    if app.export_input.is_some() {
+        overlay::draw_export_input(f, app, f.area());
+    }
+
+    if app.row_insert.is_some() {
+        overlay::draw_row_insert(f, app, f.area());
+    }
 }
 
 fn block<'a>(title: &'a str, num: &'a str, focused: bool) -> Block<'a> {

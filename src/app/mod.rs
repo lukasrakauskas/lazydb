@@ -77,6 +77,17 @@ pub struct App {
     // ponytail: multi-statement result sets; active_result indexes into this.
     all_results: Vec<StatementResult>,
     active_result: usize,
+    // ponytail: P2 sort — (col_index, direction); None = unsorted.
+    pub sort: SortState,
+    // ponytail: P2 cell inspect popup.
+    pub cell_inspect: Option<CellInspect>,
+    // ponytail: P2 export input modal.
+    pub export_input: Option<ExportInput>,
+    // ponytail: P2 row insert state.
+    pub row_insert: Option<RowInsertState>,
+    // ponytail: P2 row delete — shares confirm flow.
+    #[allow(dead_code)]
+    confirm_row_delete: Option<(usize, String, Vec<String>, Vec<String>)>,
 }
 
 impl App {
@@ -127,6 +138,11 @@ impl App {
             testing_connection: false,
             all_results: Vec::new(),
             active_result: 0,
+            sort: None,
+            cell_inspect: None,
+            export_input: None,
+            row_insert: None,
+            confirm_row_delete: None,
         })
     }
 
@@ -446,6 +462,9 @@ impl App {
             self.autocomplete.is_some(),
             self.filter_input_open,
             self.edit_cell.is_some(),
+            self.export_input.is_some(),
+            self.row_insert.is_some(),
+            self.cell_inspect.is_some(),
         );
         if self.running_query {
             let is_cancel = key.code == KeyCode::Esc
@@ -584,7 +603,15 @@ impl App {
                 self.result_scroll_row = nrows.saturating_sub(vh);
             }
 
-            Deselect => self.result_cursor_row = None,
+            Deselect => {
+                // ponytail: Esc in cell-inspect closes it rather than deselecting
+                if self.cell_inspect.is_some() {
+                    self.cell_inspect = None;
+                    self.status = "Inspect closed.".into();
+                } else {
+                    self.result_cursor_row = None;
+                }
+            }
 
             ToggleFilter => match (&self.result_filter, self.filter_input_open) {
                 (None, _) => self.set_filter_query(""),
@@ -738,6 +765,28 @@ impl App {
             }
             CycleResultNext => self.cycle_result(1),
             CycleResultPrev => self.cycle_result(-1),
+            SortColumn => self.sort_column(),
+            InspectCell => self.inspect_cell(),
+            // export
+            ExportResult => self.start_export(),
+            ExportAccept => self.confirm_export(),
+            ExportCancel => self.cancel_export(),
+            ExportFormatNext => self.export_cycle_format(1),
+            ExportFormatPrev => self.export_cycle_format(-1),
+            ExportCursorLeft => self.export_cursor_left(),
+            ExportCursorRight => self.export_cursor_right(),
+            ExportBackspace => self.export_backspace(),
+            // row insert
+            RowInsert => self.start_row_insert(),
+            RowInsertAccept => self.confirm_row_insert(),
+            RowInsertCancel => self.cancel_row_insert(),
+            RowInsertFieldLeft => self.row_insert_cursor_left(),
+            RowInsertFieldRight => self.row_insert_cursor_right(),
+            RowInsertBackspace => self.row_insert_backspace(),
+            RowInsertFieldNext => self.row_insert_field_next(1),
+            RowInsertFieldPrev => self.row_insert_field_next(-1),
+            // row delete
+            RowDelete => self.start_row_delete(),
         }
     }
 
@@ -790,6 +839,18 @@ impl App {
                     if let Some(edit) = &mut self.edit_cell {
                         edit.raw_value.insert(edit.cursor, c);
                         edit.cursor += 1;
+                    }
+                }
+                View::ResultsExport => {
+                    if let Some(export) = &mut self.export_input {
+                        export.path.insert(export.cursor, c);
+                        export.cursor += 1;
+                    }
+                }
+                View::ResultsRowInsert => {
+                    if let Some(ins) = &mut self.row_insert {
+                        ins.values[ins.cursor_col].insert(ins.cursor_char, c);
+                        ins.cursor_char += 1;
                     }
                 }
                 _ => {}
@@ -1496,6 +1557,23 @@ impl App {
         if self.form.is_some() || self.features_open {
             return;
         }
+        // ponytail: cell inspect scroll
+        if let Some(inspect) = &mut self.cell_inspect {
+            let lines: Vec<&str> = inspect.cell_value.lines().collect();
+            match m.kind {
+                MouseEventKind::ScrollDown => {
+                    inspect.scroll = inspect
+                        .scroll
+                        .saturating_add(1)
+                        .min(lines.len().saturating_sub(1));
+                }
+                MouseEventKind::ScrollUp => {
+                    inspect.scroll = inspect.scroll.saturating_sub(1);
+                }
+                _ => {}
+            }
+            return;
+        }
         let Some(rect) = self.results_rect else {
             return;
         };
@@ -1556,6 +1634,325 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    // ── Sort ─────────────────────────────────────────────────────────
+    fn sort_column(&mut self) {
+        let ncol = match &self.output {
+            Output::Table { columns, .. } => columns.len(),
+            _ => return,
+        };
+        let col = self.result_cursor_col.min(ncol.saturating_sub(1));
+        self.sort = match self.sort {
+            Some((c, SortDir::Asc)) if c == col => Some((col, SortDir::Desc)),
+            Some((c, _)) if c == col => None,
+            _ => Some((col, SortDir::Asc)),
+        };
+        if let (Output::Table { rows, .. }, Some((c, dir))) = (&mut self.output, self.sort) {
+            rows.sort_by(|a, b| {
+                let va = a.get(c).map(String::as_str).unwrap_or("");
+                let vb = b.get(c).map(String::as_str).unwrap_or("");
+                if dir == SortDir::Asc {
+                    va.cmp(vb)
+                } else {
+                    vb.cmp(va)
+                }
+            });
+        }
+        self.status = match self.sort {
+            Some((c, SortDir::Asc)) => format!("Sorted asc by column {}.", c + 1),
+            Some((_, SortDir::Desc)) => format!("Sorted desc by column {}.", col + 1),
+            None => "Sort cleared.".into(),
+        };
+    }
+
+    // ── Cell inspect ─────────────────────────────────────────────────
+    fn inspect_cell(&mut self) {
+        let abs = match self.selected_abs_row() {
+            Some(r) => r,
+            None => {
+                self.status = "No row selected.".into();
+                return;
+            }
+        };
+        let col = self.result_cursor_col;
+        let (col_name, cell_value) = match &self.output {
+            Output::Table { columns, rows, .. } => {
+                let name = columns.get(col).cloned().unwrap_or_default();
+                let val = rows
+                    .get(abs)
+                    .and_then(|r| r.get(col))
+                    .cloned()
+                    .unwrap_or_default();
+                (name, val)
+            }
+            _ => {
+                self.status = "No result table.".into();
+                return;
+            }
+        };
+        self.cell_inspect = Some(CellInspect {
+            col_name,
+            cell_value,
+            abs_row: abs,
+            col,
+            scroll: 0,
+        });
+        self.status = "Inspecting cell — Esc to close.".into();
+    }
+
+    // ── Export ────────────────────────────────────────────────────────
+    fn start_export(&mut self) {
+        let has_cols = matches!(&self.output, Output::Table { columns, .. } if !columns.is_empty());
+        if !has_cols {
+            self.status = "No results to export.".into();
+            return;
+        }
+        self.export_input = Some(ExportInput {
+            path: "export.csv".into(),
+            format: ExportFormat::Csv,
+            cursor: "export.csv".len(),
+        });
+        self.status = "Enter path, Tab for format, Enter to export, Esc to cancel.".into();
+    }
+
+    fn confirm_export(&mut self) {
+        let Some(export) = self.export_input.take() else {
+            return;
+        };
+        if export.path.trim().is_empty() {
+            self.status = "Path is empty.".into();
+            return;
+        }
+        let path = std::path::Path::new(&export.path);
+        let content = match (&self.output, export.format) {
+            (Output::Table { columns, rows, .. }, ExportFormat::Csv) => {
+                result_to_csv(columns, rows)
+            }
+            (Output::Table { columns, rows, .. }, ExportFormat::Json) => {
+                let objs: Vec<String> = rows.iter().map(|r| row_to_json(columns, r)).collect();
+                format!("[\n{}\n]", objs.join(",\n"))
+            }
+            (Output::Table { columns, rows, .. }, ExportFormat::JsonLines) => rows
+                .iter()
+                .map(|r| row_to_json(columns, r))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => return,
+        };
+        match std::fs::write(path, &content) {
+            Ok(()) => {
+                self.status = format!(
+                    "Exported {} rows to {}.",
+                    content.lines().count(),
+                    export.path
+                );
+            }
+            Err(e) => {
+                self.status = format!("Export failed: {e}");
+                // ponytail: restore input on failure so the user can fix the path
+                self.export_input = Some(ExportInput {
+                    cursor: export.path.len(),
+                    ..export
+                });
+            }
+        }
+    }
+
+    fn cancel_export(&mut self) {
+        self.export_input = None;
+        self.status = "Export cancelled.".into();
+    }
+
+    fn export_cycle_format(&mut self, dir: isize) {
+        let Some(export) = &mut self.export_input else {
+            return;
+        };
+        let n = ExportFormat::LABELS.len();
+        let cur = export.format as isize;
+        let next = (cur + dir).rem_euclid(n as isize) as usize;
+        export.format = match next {
+            1 => ExportFormat::Json,
+            2 => ExportFormat::JsonLines,
+            _ => ExportFormat::Csv,
+        };
+        let old_path = std::path::Path::new(&export.path);
+        let stem = old_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("export");
+        export.path = format!("{}.{}", stem, export.format.extension());
+        export.cursor = export.path.len();
+    }
+
+    fn export_cursor_left(&mut self) {
+        if let Some(export) = &mut self.export_input {
+            export.cursor = export.cursor.saturating_sub(1);
+        }
+    }
+    fn export_cursor_right(&mut self) {
+        if let Some(export) = &mut self.export_input {
+            export.cursor = (export.cursor + 1).min(export.path.len());
+        }
+    }
+    fn export_backspace(&mut self) {
+        if let Some(export) = &mut self.export_input
+            && export.cursor > 0
+        {
+            export.cursor -= 1;
+            export.path.remove(export.cursor);
+        }
+    }
+
+    // ── Row insert ────────────────────────────────────────────────────
+    fn start_row_insert(&mut self) {
+        if self.db.is_none() {
+            self.status = "Not connected.".into();
+            return;
+        };
+        let table = match extract_table_name(&self.editor.text()) {
+            Some(t) => t,
+            None => {
+                self.status = "No table name found in the query.".into();
+                return;
+            }
+        };
+        let Output::Table { columns, .. } = &self.output else {
+            self.status = "No result table.".into();
+            return;
+        };
+        let cols = columns.clone();
+        let values = vec![String::new(); cols.len()];
+        self.row_insert = Some(RowInsertState {
+            table,
+            columns: cols,
+            values,
+            cursor_col: 0,
+            cursor_char: 0,
+        });
+        self.status = "Enter values, Tab to switch columns, Enter to insert, Esc to cancel.".into();
+    }
+
+    fn confirm_row_insert(&mut self) {
+        let Some(ins) = self.row_insert.take() else {
+            return;
+        };
+        let Some(db) = self.db.as_ref() else {
+            self.status = "Not connected.".into();
+            return;
+        };
+        let kind = db.kind();
+        let q = ident_quote(kind);
+        let cols: String = ins
+            .columns
+            .iter()
+            .map(|c| format!("{q}{c}{q}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let vals: String = ins
+            .values
+            .iter()
+            .map(|v| {
+                if v == "NULL" {
+                    "NULL".into()
+                } else {
+                    format!("'{}'", sql_escape(v))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "INSERT INTO {q}{table}{q} ({cols}) VALUES ({vals});",
+            q = q,
+            table = ins.table,
+            cols = cols,
+            vals = vals
+        );
+        let db = db.boxed_clone();
+        self.rx = Some(spawn_job(Job::Query(db, sql, self.exec_ctx(false))));
+        self.running_query = true;
+        self.status = "Inserting row…".into();
+    }
+
+    fn cancel_row_insert(&mut self) {
+        self.row_insert = None;
+        self.status = "Row insert cancelled.".into();
+    }
+
+    fn row_insert_cursor_left(&mut self) {
+        if let Some(ins) = &mut self.row_insert {
+            ins.cursor_char = ins.cursor_char.saturating_sub(1);
+        }
+    }
+    fn row_insert_cursor_right(&mut self) {
+        if let Some(ins) = &mut self.row_insert {
+            ins.cursor_char = (ins.cursor_char + 1).min(ins.values[ins.cursor_col].len());
+        }
+    }
+    fn row_insert_backspace(&mut self) {
+        if let Some(ins) = &mut self.row_insert
+            && ins.cursor_char > 0
+        {
+            ins.cursor_char -= 1;
+            ins.values[ins.cursor_col].remove(ins.cursor_char);
+        }
+    }
+    fn row_insert_field_next(&mut self, dir: isize) {
+        let Some(ins) = &mut self.row_insert else {
+            return;
+        };
+        let n = ins.columns.len();
+        ins.cursor_col = ((ins.cursor_col as isize + dir).rem_euclid(n as isize)) as usize;
+        ins.cursor_char = ins.values[ins.cursor_col].len();
+    }
+
+    // ── Row delete ────────────────────────────────────────────────────
+    // ponytail: naive WHERE = "col1 = 'v1' AND col2 = 'v2'" for ALL columns.
+    // Fragile for large / binary cols but covers the 90% case. Upgrade: use
+    // primary key lookup (Job::PrimaryKeys) like cell edit.
+    fn start_row_delete(&mut self) {
+        let Some(db) = self.db.as_ref() else {
+            self.status = "Not connected.".into();
+            return;
+        };
+        let abs_row = match self.selected_abs_row() {
+            Some(r) => r,
+            None => {
+                self.status = "No row selected.".into();
+                return;
+            }
+        };
+        let Output::Table { columns, rows, .. } = &self.output else {
+            self.status = "No result table.".into();
+            return;
+        };
+        let row = match rows.get(abs_row) {
+            Some(r) => r,
+            None => {
+                self.status = "Invalid row.".into();
+                return;
+            }
+        };
+        let table = match extract_table_name(&self.editor.text()) {
+            Some(t) => t,
+            None => {
+                self.status = "No table name found in the query.".into();
+                return;
+            }
+        };
+        let kind = db.kind();
+        let q = ident_quote(kind);
+        let where_clause: String = columns
+            .iter()
+            .zip(row.iter())
+            .map(|(c, v)| format!("{q}{c}{q} = '{}'", sql_escape(v)))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let sql = format!("DELETE FROM {q}{table}{q} WHERE {where_clause};");
+        let db = db.boxed_clone();
+        self.rx = Some(spawn_job(Job::Query(db, sql, self.exec_ctx(false))));
+        self.running_query = true;
+        self.status = "Deleting row…".into();
     }
 }
 

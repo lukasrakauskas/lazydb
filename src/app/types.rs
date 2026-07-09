@@ -177,3 +177,64 @@ pub struct Autocomplete {
     pub cursor: usize,
     pub trigger_len: usize,
 }
+
+// ── Sort ─────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SortDir {
+    Asc,
+    Desc,
+}
+
+pub type SortState = Option<(usize, SortDir)>;
+
+// ── Cell inspect popup ────────────────────────────────────────────────
+
+#[derive(Clone)]
+pub struct CellInspect {
+    pub col_name: String,
+    pub cell_value: String,
+    pub abs_row: usize,
+    pub col: usize,
+    pub scroll: usize,
+}
+
+// ── Export path input ────────────────────────────────────────────────
+
+#[derive(Clone)]
+pub struct ExportInput {
+    pub path: String,
+    pub format: ExportFormat,
+    pub cursor: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ExportFormat {
+    Csv,
+    Json,
+    JsonLines,
+}
+
+impl ExportFormat {
+    pub const LABELS: [&'static str; 3] = ["CSV", "JSON (array)", "JSON (lines)"];
+    pub fn extension(&self) -> &'static str {
+        match self {
+            Self::Csv => "csv",
+            Self::Json => "json",
+            Self::JsonLines => "jsonl",
+        }
+    }
+}
+
+// ── Row insert ────────────────────────────────────────────────────────
+
+#[derive(Clone)]
+pub struct RowInsertState {
+    pub table: String,
+    pub columns: Vec<String>,
+    pub values: Vec<String>,
+    pub cursor_col: usize,
+    pub cursor_char: usize,
+}
+
+// ponytail: Row delete uses the same PrimaryKeys job flow as cell edit.
