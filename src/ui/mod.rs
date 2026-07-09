@@ -32,7 +32,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .split(main);
     let right = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(8), Constraint::Min(1)])
+        .constraints([Constraint::Length(app.editor_height), Constraint::Min(1)])
         .split(cols[1]);
 
     let left = Layout::default()
@@ -73,6 +73,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     if app.row_insert.is_some() {
         overlay::draw_row_insert(f, app, f.area());
+    }
+
+    if app.editor_save_input.is_some() {
+        overlay::draw_save_editor(f, app, f.area());
     }
 }
 

@@ -88,6 +88,10 @@ pub struct App {
     // ponytail: P2 row delete — shares confirm flow.
     #[allow(dead_code)]
     confirm_row_delete: Option<(usize, String, Vec<String>, Vec<String>)>,
+    // ponytail: PR3 resizable editor — height in terminal rows.
+    pub editor_height: u16,
+    // ponytail: PR3 save-editor path input.
+    pub editor_save_input: Option<ExportInput>,
 }
 
 impl App {
@@ -143,6 +147,8 @@ impl App {
             export_input: None,
             row_insert: None,
             confirm_row_delete: None,
+            editor_height: 8,
+            editor_save_input: None,
         })
     }
 
@@ -465,6 +471,7 @@ impl App {
             self.export_input.is_some(),
             self.row_insert.is_some(),
             self.cell_inspect.is_some(),
+            self.editor_save_input.is_some(),
         );
         if self.running_query {
             let is_cancel = key.code == KeyCode::Esc
@@ -667,6 +674,13 @@ impl App {
             EditorEnd => self.editor.end(),
             RecallHistoryOlder => self.recall_history(true),
             RecallHistoryNewer => self.recall_history(false),
+            SaveBuffer => self.start_save_buffer(),
+            FormatSql => self.format_sql(),
+            ExplainQuery => self.explain_query(),
+            AdjustEditorHeightUp => self.adjust_editor_height(1),
+            AdjustEditorHeightDown => self.adjust_editor_height(-1),
+            SaveBufferAccept => self.confirm_save_buffer(),
+            SaveBufferCancel => self.cancel_save_buffer(),
 
             AcceptCompletion => self.accept_completion(),
             CompletionNext => self.move_completion(1),
@@ -851,6 +865,12 @@ impl App {
                     if let Some(ins) = &mut self.row_insert {
                         ins.values[ins.cursor_col].insert(ins.cursor_char, c);
                         ins.cursor_char += 1;
+                    }
+                }
+                View::EditorSave => {
+                    if let Some(input) = &mut self.editor_save_input {
+                        input.path.insert(input.cursor, c);
+                        input.cursor += 1;
                     }
                 }
                 _ => {}
@@ -1955,6 +1975,83 @@ impl App {
         self.rx = Some(spawn_job(Job::Query(db, sql, self.exec_ctx(false))));
         self.running_query = true;
         self.status = "Deleting row…".into();
+    }
+
+    // ── Editor save ───────────────────────────────────────────────────
+    fn start_save_buffer(&mut self) {
+        self.editor_save_input = Some(ExportInput {
+            path: "query.sql".into(),
+            format: ExportFormat::Csv, // unused for save
+            cursor: "query.sql".len(),
+        });
+        self.status = "Save editor to file — Enter to save, Esc to cancel.".into();
+    }
+
+    fn confirm_save_buffer(&mut self) {
+        let Some(input) = self.editor_save_input.take() else {
+            return;
+        };
+        if input.path.trim().is_empty() {
+            self.status = "Path is empty.".into();
+            return;
+        }
+        match std::fs::write(&input.path, self.editor.text()) {
+            Ok(()) => self.status = format!("Saved to {}.", input.path),
+            Err(e) => {
+                self.status = format!("Save failed: {e}");
+                self.editor_save_input = Some(ExportInput {
+                    cursor: input.path.len(),
+                    ..input
+                });
+            }
+        }
+    }
+
+    fn cancel_save_buffer(&mut self) {
+        self.editor_save_input = None;
+        self.status = "Save cancelled.".into();
+    }
+
+    // ── Format SQL ─────────────────────────────────────────────────────
+    fn format_sql(&mut self) {
+        use sqlformat::{FormatOptions, QueryParams, format as sql_format};
+        let text = self.editor.text();
+        if text.trim().is_empty() {
+            self.status = "Editor is empty.".into();
+            return;
+        }
+        let formatted = sql_format(&text, &QueryParams::None, &FormatOptions::default());
+        if formatted != text {
+            self.editor = Editor::from_text(formatted);
+            self.status = "SQL formatted.".into();
+        } else {
+            self.status = "SQL already formatted.".into();
+        }
+    }
+
+    // ── EXPLAIN shortcut ──────────────────────────────────────────────
+    fn explain_query(&mut self) {
+        let sql = self.editor.text();
+        if sql.trim().is_empty() {
+            self.status = "Editor is empty.".into();
+            return;
+        }
+        // ponytail: prepend EXPLAIN to the first statement; won't catch multi-stmt.
+        // For multi-statement scripts, explain just the first one.
+        let first = sql.split(';').next().unwrap_or(&sql).trim();
+        let explain_sql = format!("EXPLAIN {first};");
+        let head: String = explain_sql.chars().take(120).collect();
+        crate::log::info("query", &[("explain_head", &head)]);
+        self.execute_sql(explain_sql);
+    }
+
+    // ── Resizable editor height ────────────────────────────────────────
+    fn adjust_editor_height(&mut self, dir: i32) {
+        // ponytail: clamp between 3 and 40 rows; the right-col height is
+        // dynamic so we can't enforce a max based on terminal size here.
+        let new = (self.editor_height as i32 + dir * 2).clamp(3, 40);
+        self.editor_height = new as u16;
+        self.status = format!("Editor height: {}", self.editor_height);
     }
 }
 

@@ -316,6 +316,43 @@ pub(crate) fn draw_confirm_destructive(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(msg).wrap(Wrap { trim: false }), inner);
 }
 
+/// Editor save path input.
+pub(crate) fn draw_save_editor(f: &mut Frame, app: &App, area: Rect) {
+    let Some(input) = &app.editor_save_input else {
+        return;
+    };
+    let w = 72.min(area.width);
+    let h = 6.min(area.height);
+    let x = area.x + (area.width - w) / 2;
+    let y = area.y + (area.height - h) / 2;
+    let pop = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
+    f.render_widget(Clear, pop);
+
+    let b = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(" Save Editor Buffer  (Enter: save, Esc: cancel)")
+        .border_style(theme::FEATURES_BORDER);
+    let inner = b.inner(pop);
+    f.render_widget(b, pop);
+
+    let line = Line::from(vec![
+        Span::styled(" Path: ", theme::FORM_LABEL),
+        Span::styled(input.path.clone(), Style::default()),
+    ]);
+    f.render_widget(Paragraph::new(line), inner);
+    let cx = inner.x + 7 + input.cursor as u16;
+    let cy = inner.y;
+    if cx < inner.right() && cy < inner.bottom() {
+        f.set_cursor_position((cx, cy));
+    }
+}
+
 /// Cell inspect popup — shows full cell content.
 pub(crate) fn draw_cell_inspect(f: &mut Frame, app: &App, area: Rect) {
     let Some(inspect) = &app.cell_inspect else {
