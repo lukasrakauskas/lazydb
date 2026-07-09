@@ -13,10 +13,7 @@ pub(crate) fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
     let view = shortcuts::current_view(
         app.focus,
         app.form.is_some(),
-        app.form
-            .as_ref()
-            .and_then(|f| f.kind_picker.as_ref())
-            .is_some(),
+        app.kind_picker_open(),
         app.features_open,
         app.confirm_destructive.is_some(),
         app.confirm_delete.is_some(),
@@ -39,8 +36,8 @@ pub(crate) fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
 pub(crate) fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let conn = app
         .db_name
-        .clone()
-        .unwrap_or_else(|| "not connected".into());
+        .as_deref()
+        .unwrap_or("not connected");
     let spinner = if app.running_query {
         " ⏳ (Esc/Ctrl+C to cancel)"
     } else {

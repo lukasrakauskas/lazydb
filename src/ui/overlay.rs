@@ -211,7 +211,7 @@ fn draw_form_kind_picker(f: &mut Frame, form: &FormState, pop: Rect) {
         let text = format!(
             " {:width$}",
             FormState::KINDS[idx],
-            width = (w - 3) as usize
+            width = w.saturating_sub(3) as usize
         );
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(text, style))),

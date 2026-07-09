@@ -216,15 +216,21 @@ pub(crate) fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
                 draw_edit_bar(f, edit, edit_bar);
             }
             let table_area = rest;
-            let (disp, disp_abs): (Vec<Vec<String>>, Vec<usize>) = match &app.result_filter {
-                Some(f) => (
-                    f.matched
+            let filtered_rows: Vec<Vec<String>>;
+            let all_abs: Vec<usize>;
+            let (disp, disp_abs) = match &app.result_filter {
+                Some(f) => {
+                    filtered_rows = f
+                        .matched
                         .iter()
                         .filter_map(|&i| rows.get(i).cloned())
-                        .collect(),
-                    f.matched.clone(),
-                ),
-                None => (rows.clone(), (0..rows.len()).collect()),
+                        .collect();
+                    (&filtered_rows[..], &f.matched[..])
+                }
+                None => {
+                    all_abs = (0..rows.len()).collect();
+                    (rows.as_slice(), &all_abs[..])
+                },
             };
             let offsets = app.result_filter.as_ref().map(|f| &f.offsets);
             let (cr, sr, cc, sc) = (
@@ -236,10 +242,10 @@ pub(crate) fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
             let (body_h, vis_cols, geom) = draw_table(
                 f,
                 columns,
-                &disp,
+                disp,
                 table_area,
                 (cr, sr, cc, sc),
-                &disp_abs,
+                disp_abs,
                 offsets,
             );
             app.results_click_geom = Some(geom);

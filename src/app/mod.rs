@@ -403,16 +403,19 @@ impl App {
         }
     }
 
+    pub fn kind_picker_open(&self) -> bool {
+        self.form
+            .as_ref()
+            .and_then(|f| f.kind_picker.as_ref())
+            .is_some()
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) {
         if key.kind != KeyEventKind::Press {
             return;
         }
         self.last_key = Some(format_key_event(&key));
-        let kind_picker = self
-            .form
-            .as_ref()
-            .and_then(|f| f.kind_picker.as_ref())
-            .is_some();
+        let kind_picker = self.kind_picker_open();
         let view = shortcuts::current_view(
             self.focus,
             self.form.is_some(),

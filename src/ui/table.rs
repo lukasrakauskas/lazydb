@@ -176,7 +176,6 @@ pub(crate) fn draw_table(
     }
 
     if vbar_gutter != Rect::ZERO {
-        let body_h = (table_area.height as usize).saturating_sub(1);
         let mut vstate = ScrollbarState::new(rows.len())
             .position(scroll_row.min(rows.len().saturating_sub(1)))
             .viewport_content_length(body_h);
