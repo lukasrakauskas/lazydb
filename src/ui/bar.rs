@@ -34,10 +34,7 @@ pub(crate) fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 pub(crate) fn draw_status(f: &mut Frame, app: &App, area: Rect) {
-    let conn = app
-        .db_name
-        .as_deref()
-        .unwrap_or("not connected");
+    let conn = app.db_name.as_deref().unwrap_or("not connected");
     let spinner = if app.running_query {
         " ⏳ (Esc/Ctrl+C to cancel)"
     } else {

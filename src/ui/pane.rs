@@ -230,7 +230,7 @@ pub(crate) fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
                 None => {
                     all_abs = (0..rows.len()).collect();
                     (rows.as_slice(), &all_abs[..])
-                },
+                }
             };
             let offsets = app.result_filter.as_ref().map(|f| &f.offsets);
             let (cr, sr, cc, sc) = (
