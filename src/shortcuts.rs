@@ -41,6 +41,7 @@ pub enum View {
     CellInspect,
     EditorSave,
     Schema,
+    SchemaFilter,
 }
 
 /// Behavior a shortcut can trigger. One variant per distinct effect; the same
@@ -146,6 +147,10 @@ pub enum Action {
     // schema
     SchemaExpand,
     SchemaCollapse,
+    SchemaFilterToggle,
+    SchemaFilterAccept,
+    SchemaFilterCancel,
+    SchemaFilterBackspace,
     // form modal
     FormSave,
     FormCancel,
@@ -894,6 +899,33 @@ static RESULTS_EDIT: &[Binding] = &[
     // typed chars fall through to raw text input; no binding.
 ];
 
+static SCHEMA_FILTER: &[Binding] = &[
+    Binding {
+        keys: &[bare(KeyCode::Enter, "⏎")],
+        label: "accept",
+        action: Action::SchemaFilterAccept,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Esc, "Esc")],
+        label: "cancel",
+        action: Action::SchemaFilterCancel,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Backspace, "⌫")],
+        label: "del",
+        action: Action::SchemaFilterBackspace,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ch('/', "/")],
+        label: "close",
+        action: Action::SchemaFilterToggle,
+        hidden: false,
+    },
+];
+
 static SCHEMA: &[Binding] = &[
     Binding {
         keys: &[ch('j', "j"), bare(KeyCode::Down, "↓")],
@@ -921,6 +953,12 @@ static SCHEMA: &[Binding] = &[
         keys: &[ch('h', "h"), bare(KeyCode::Left, "←")],
         label: "collapse",
         action: Action::SchemaCollapse,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ch('/', "/")],
+        label: "filter",
+        action: Action::SchemaFilterToggle,
         hidden: false,
     },
 ];
@@ -1122,6 +1160,7 @@ fn view_bindings(view: View) -> &'static [Binding] {
         View::CellInspect => CELL_INSPECT,
         View::EditorSave => EDITOR_SAVE,
         View::Schema => SCHEMA,
+        View::SchemaFilter => SCHEMA_FILTER,
         View::Form => FORM,
         View::KindPicker => KIND_PICKER,
         View::Features => FEATURES,
@@ -1175,11 +1214,14 @@ pub fn current_view(
     row_insert: bool,
     cell_inspect: bool,
     editor_save: bool,
+    schema_filter_open: bool,
 ) -> View {
     if confirm_destructive {
         View::ConfirmDestructive
     } else if editor_save {
         View::EditorSave
+    } else if schema_filter_open && focus == Focus::Schema {
+        View::SchemaFilter
     } else if cell_inspect {
         View::CellInspect
     } else if confirm_delete {
@@ -1231,53 +1273,39 @@ mod tests {
     fn current_view_modal_wins_over_focus_and_autocomplete() {
         let f = false;
         assert_eq!(
-            current_view(
-                Focus::Editor,
-                true,
-                f,
-                true,
-                true,
-                f,
-                true,
-                true,
-                f,
-                f,
-                f,
-                f,
-                f
-            ),
+            current_view(Focus::Editor, true, f, true, true, f, true, true, f, f, f, f, f, f),
             View::ConfirmDestructive
         );
         assert_eq!(
-            current_view(Focus::Editor, true, f, f, f, f, f, f, f, f, f, f, f),
+            current_view(Focus::Editor, true, f, f, f, f, f, f, f, f, f, f, f, f),
             View::Form
         );
         assert_eq!(
-            current_view(Focus::Editor, f, f, true, f, f, f, f, f, f, f, f, f),
+            current_view(Focus::Editor, f, f, true, f, f, f, f, f, f, f, f, f, f),
             View::Features
         );
         assert_eq!(
-            current_view(Focus::Editor, f, f, f, f, f, true, f, f, f, f, f, f),
+            current_view(Focus::Editor, f, f, f, f, f, true, f, f, f, f, f, f, f),
             View::EditorAutocomplete
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, f, f, f, f, f, f, f, f, f),
+            current_view(Focus::Results, f, f, f, f, f, f, f, f, f, f, f, f, f),
             View::Results
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, f, f, f, true, f, f, f, f, f),
+            current_view(Focus::Results, f, f, f, f, f, f, true, f, f, f, f, f, f),
             View::ResultsFilter
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, f, f, f, f, true, f, f, f, f),
+            current_view(Focus::Results, f, f, f, f, f, f, f, true, f, f, f, f, f),
             View::ResultsEdit
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, true, f, f, f, true, f, f, f, f),
+            current_view(Focus::Results, f, f, f, true, f, f, f, true, f, f, f, f, f),
             View::ConfirmDestructive
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, f, true, f, f, f, f, f, f, f),
+            current_view(Focus::Results, f, f, f, f, true, f, f, f, f, f, f, f, f),
             View::ConfirmDelete
         );
     }

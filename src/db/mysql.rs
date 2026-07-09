@@ -57,6 +57,14 @@ impl Database for Mysql {
         Ok(map)
     }
 
+    fn views(&self) -> Result<Vec<String>> {
+        let mut conn = self.pool.get_conn()?;
+        let rows: Vec<(String,)> = conn.query(
+            "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'VIEW' ORDER BY TABLE_NAME",
+        )?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
     fn execute_script(&self, sql: &str, ctx: &ExecCtx) -> Result<ExecutionResult> {
         // ponytail: collect every statement's result separately so multi-statement
         // scripts display all result sets, not just the first. The app shows the

@@ -62,6 +62,9 @@ pub struct App {
     pub last_key: Option<String>,
     pub autocomplete: Option<Autocomplete>,
     pub schema: HashMap<String, Vec<String>>,
+    pub schema_views: Vec<String>,
+    pub schema_filter: Option<String>,
+    pub schema_filter_input_open: bool,
     pub schema_cursor: usize,
     pub schema_expanded: HashSet<String>,
     pub history: Vec<String>,
@@ -129,6 +132,9 @@ impl App {
             last_key: None,
             autocomplete: None,
             schema: HashMap::new(),
+            schema_views: Vec::new(),
+            schema_filter: None,
+            schema_filter_input_open: false,
             schema_cursor: 0,
             schema_expanded: HashSet::new(),
             history: Vec::new(),
@@ -378,9 +384,22 @@ impl App {
                     self.schema = map;
                     self.schema_cursor = 0;
                     self.schema_expanded.clear();
+                    self.schema_filter = None;
+                    self.schema_filter_input_open = false;
                     self.status = format!("Schema loaded: {n} tables.");
+                    if let Some(db) = self.db.as_ref() {
+                        self.rx = Some(spawn_job(Job::Views(db.boxed_clone())));
+                    }
                 }
                 Err(e) => self.status = format!("Schema load failed: {e}"),
+            },
+            JobResult::Views(r) => match r {
+                Ok(views) => {
+                    let n = self.schema.len();
+                    self.schema_views = views;
+                    self.status = format!("Schema loaded: {n} tables, {} views.", self.schema_views.len());
+                }
+                Err(e) => self.status = format!("Views load failed: {e}"),
             },
             JobResult::PrimaryKeys(r) => match r {
                 Ok(pk_cols) => {
@@ -472,6 +491,7 @@ impl App {
             self.row_insert.is_some(),
             self.cell_inspect.is_some(),
             self.editor_save_input.is_some(),
+            self.schema_filter_input_open,
         );
         if self.running_query {
             let is_cancel = key.code == KeyCode::Esc
@@ -644,6 +664,33 @@ impl App {
                     f.query.pop();
                     let q = f.query.clone();
                     self.set_filter_query(&q);
+                }
+            }
+
+            SchemaFilterToggle => match (&self.schema_filter, self.schema_filter_input_open) {
+                (None, _) => self.set_schema_filter(""),
+                (Some(_), false) => self.schema_filter_input_open = true,
+                (Some(_), true) => self.clear_schema_filter(),
+            },
+            SchemaFilterAccept => {
+                let empty = self
+                    .schema_filter
+                    .as_ref()
+                    .is_none_or(|q| q.is_empty());
+                if empty {
+                    self.clear_schema_filter();
+                } else {
+                    self.schema_filter_input_open = false;
+                }
+            }
+            SchemaFilterCancel => self.clear_schema_filter(),
+            SchemaFilterBackspace => {
+                if self.schema_filter_input_open
+                    && let Some(q) = self.schema_filter.as_mut()
+                {
+                    q.pop();
+                    let s = q.clone();
+                    self.set_schema_filter(&s);
                 }
             }
 
@@ -832,6 +879,13 @@ impl App {
                     };
                     self.set_filter_query(&q);
                 }
+                View::SchemaFilter => {
+                    let q = match &self.schema_filter {
+                        Some(s) => format!("{s}{c}"),
+                        None => c.to_string(),
+                    };
+                    self.set_schema_filter(&q);
+                }
                 View::Form => {
                     if let Some(f) = self.form.as_mut() {
                         if f.active == 0 {
@@ -969,6 +1023,16 @@ impl App {
         }
     }
 
+    fn set_schema_filter(&mut self, query: &str) {
+        self.schema_filter = Some(query.to_string());
+        self.schema_filter_input_open = true;
+    }
+
+    fn clear_schema_filter(&mut self) {
+        self.schema_filter = None;
+        self.schema_filter_input_open = false;
+    }
+
     fn clear_filter(&mut self) {
         self.result_filter = None;
         self.filter_input_open = false;
@@ -1009,12 +1073,18 @@ impl App {
     }
 
     fn schema_expand_or_run(&mut self) {
+        let kind = self.db.as_ref().map(|d| d.kind()).unwrap_or("mysql");
         match self.schema_entry_at_cursor() {
             Some(SchemaEntry::Table(t)) => {
                 self.schema_expanded.insert(t);
             }
+            Some(SchemaEntry::View(v)) => {
+                let sql = schema_query(&v, SchemaOpt::Rows, kind);
+                self.editor = Editor::from_text(sql);
+                self.focus = Focus::Results;
+                self.run_query();
+            }
             Some(SchemaEntry::Leaf { table, opt }) => {
-                let kind = self.db.as_ref().map(|d| d.kind()).unwrap_or("mysql");
                 let sql = schema_query(&table, opt, kind);
                 self.editor = Editor::from_text(sql);
                 self.focus = Focus::Results;
@@ -1530,11 +1600,27 @@ impl App {
         }
     }
 
+    /// Rendered rows for the schema tree. When `schema_filter` is Some,
+    /// only entries whose table/view name contains the query (case-insensitive)
+    /// are included.
     pub fn schema_rows(&self) -> Vec<SchemaEntry> {
+        let q = self
+            .schema_filter
+            .as_deref()
+            .filter(|q| !q.is_empty())
+            .map(|q| q.to_lowercase());
+        let matches_filter = |name: &str| {
+            q.as_ref()
+                .map(|q| name.to_lowercase().contains(q.as_str()))
+                .unwrap_or(true)
+        };
+        let mut rows: Vec<SchemaEntry> = Vec::new();
         let mut tables: Vec<&String> = self.schema.keys().collect();
         tables.sort();
-        let mut rows: Vec<SchemaEntry> = Vec::new();
         for t in tables {
+            if !matches_filter(t) {
+                continue;
+            }
             rows.push(SchemaEntry::Table(t.clone()));
             if self.schema_expanded.contains(t) {
                 for opt in [
@@ -1550,6 +1636,11 @@ impl App {
                 }
             }
         }
+        for v in &self.schema_views {
+            if matches_filter(v) {
+                rows.push(SchemaEntry::View(v.clone()));
+            }
+        }
         rows
     }
 
@@ -1560,6 +1651,7 @@ impl App {
     fn schema_table_at_cursor(&self) -> Option<String> {
         match self.schema_entry_at_cursor() {
             Some(SchemaEntry::Table(t)) => Some(t),
+            Some(SchemaEntry::View(v)) => Some(v),
             Some(SchemaEntry::Leaf { table, .. }) => Some(table),
             None => None,
         }

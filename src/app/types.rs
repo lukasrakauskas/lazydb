@@ -24,6 +24,7 @@ pub enum SchemaOpt {
 #[derive(Clone, PartialEq, Eq)]
 pub enum SchemaEntry {
     Table(String),
+    View(String),
     Leaf { table: String, opt: SchemaOpt },
 }
 

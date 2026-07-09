@@ -48,16 +48,42 @@ pub(crate) fn draw_connections(f: &mut Frame, app: &App, area: Rect) {
 
 pub(crate) fn draw_schema(f: &mut Frame, app: &App, area: Rect) {
     let n = app.schema.len();
-    let title = format!("Schema  ·  {n} tables  (Enter: expand / run)");
+    let nv = app.schema_views.len();
+    let filter_suffix = app.schema_filter.as_ref().map(|q| format!("  ·  filter: '{q}'")).unwrap_or_default();
+    let title = format!("Schema  ·  {n} tables, {nv} views{filter_suffix}");
     let b = block(&title, "4", app.focus == Focus::Schema);
     let inner = b.inner(area);
     f.render_widget(b, area);
 
+    // ponytail: filter bar drawn inline, same height as results filter bar
+    let (draw_area, filter_bar) = if app.schema_filter.is_some() {
+        let [fb, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+        (rest, Some(fb))
+    } else {
+        (inner, None)
+    };
+    if let Some(fb) = filter_bar {
+        let query = app.schema_filter.as_deref().unwrap_or("");
+        let line = Line::from(vec![
+            Span::styled("filter: ", theme::FILTER_PROMPT),
+            Span::styled(query.to_owned(), theme::FILTER_QUERY),
+            Span::styled("▏", theme::FILTER_CURSOR),
+        ]);
+        f.render_widget(Paragraph::new(line), fb);
+    }
+
     let rows = app.schema_rows();
-    if rows.is_empty() {
+    if rows.is_empty() && app.schema.is_empty() {
         f.render_widget(
             Paragraph::new("Connect to load schema.").style(theme::PLACEHOLDER),
-            inner,
+            draw_area,
+        );
+        return;
+    }
+    if rows.is_empty() && app.schema_filter.is_some() {
+        f.render_widget(
+            Paragraph::new("(no tables or views match)").style(theme::PLACEHOLDER),
+            draw_area,
         );
         return;
     }
@@ -81,6 +107,9 @@ pub(crate) fn draw_schema(f: &mut Frame, app: &App, area: Rect) {
                     };
                     Line::from(Span::styled(format!(" {mark} {t}"), style))
                 }
+                SchemaEntry::View(v) => {
+                    Line::from(Span::styled(format!("  ◇ {v}"), style))
+                }
                 SchemaEntry::Leaf { opt, .. } => {
                     let label = match opt {
                         SchemaOpt::Rows => "rows",
@@ -93,7 +122,7 @@ pub(crate) fn draw_schema(f: &mut Frame, app: &App, area: Rect) {
             }
         })
         .collect();
-    f.render_widget(Paragraph::new(lines), inner);
+    f.render_widget(Paragraph::new(lines), draw_area);
 }
 
 pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
