@@ -183,10 +183,8 @@ impl Database for Postgres {
                     // (a SELECT's row count lives in `rows.len()`); reporting
                     // the SELECT command tag's count would double-show "N
                     // affected" beside "N rows".
-                    postgres::SimpleQueryMessage::CommandComplete(n) => {
-                        if !had_result_set {
-                            rows_affected = *n;
-                        }
+                    postgres::SimpleQueryMessage::CommandComplete(n) if !had_result_set => {
+                        rows_affected = *n;
                     }
                     _ => {}
                 }

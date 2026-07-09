@@ -732,12 +732,12 @@ impl App {
                     self.refresh_autocomplete();
                 }
                 View::KindPicker => {
-                    if let Some(form) = &mut self.form {
-                        if let Some(picker) = &mut form.kind_picker {
-                            let mut q = picker.query.clone();
-                            q.push(c);
-                            picker.set_query(q);
-                        }
+                    if let Some(form) = &mut self.form
+                        && let Some(picker) = &mut form.kind_picker
+                    {
+                        let mut q = picker.query.clone();
+                        q.push(c);
+                        picker.set_query(q);
                     }
                 }
                 View::ResultsFilter => {
@@ -960,21 +960,23 @@ impl App {
     }
 
     fn form_field_down(&mut self) {
-        if let Some(form) = &mut self.form {
-            if form.active == 0 && form.kind_picker.is_none() {
-                form.kind_picker = Some(KindPickerState::new());
-                return;
-            }
+        if let Some(form) = &mut self.form
+            && form.active == 0
+            && form.kind_picker.is_none()
+        {
+            form.kind_picker = Some(KindPickerState::new());
+            return;
         }
         self.form_field_next(1);
     }
 
     fn form_field_up(&mut self) {
-        if let Some(form) = &mut self.form {
-            if form.active == 0 && form.kind_picker.is_none() {
-                form.kind_picker = Some(KindPickerState::new());
-                return;
-            }
+        if let Some(form) = &mut self.form
+            && form.active == 0
+            && form.kind_picker.is_none()
+        {
+            form.kind_picker = Some(KindPickerState::new());
+            return;
         }
         self.form_field_next(-1);
     }
@@ -1006,31 +1008,31 @@ impl App {
     }
 
     fn form_kind_picker_next(&mut self) {
-        if let Some(form) = &mut self.form {
-            if let Some(picker) = &mut form.kind_picker {
-                let n = picker.filtered.len();
-                if n > 0 {
-                    picker.cursor = (picker.cursor + 1).min(n - 1);
-                }
+        if let Some(form) = &mut self.form
+            && let Some(picker) = &mut form.kind_picker
+        {
+            let n = picker.filtered.len();
+            if n > 0 {
+                picker.cursor = (picker.cursor + 1).min(n - 1);
             }
         }
     }
 
     fn form_kind_picker_prev(&mut self) {
-        if let Some(form) = &mut self.form {
-            if let Some(picker) = &mut form.kind_picker {
-                picker.cursor = picker.cursor.saturating_sub(1);
-            }
+        if let Some(form) = &mut self.form
+            && let Some(picker) = &mut form.kind_picker
+        {
+            picker.cursor = picker.cursor.saturating_sub(1);
         }
     }
 
     fn form_kind_picker_backspace(&mut self) {
-        if let Some(form) = &mut self.form {
-            if let Some(picker) = &mut form.kind_picker {
-                let mut q = picker.query.clone();
-                q.pop();
-                picker.set_query(q);
-            }
+        if let Some(form) = &mut self.form
+            && let Some(picker) = &mut form.kind_picker
+        {
+            let mut q = picker.query.clone();
+            q.pop();
+            picker.set_query(q);
         }
     }
 
