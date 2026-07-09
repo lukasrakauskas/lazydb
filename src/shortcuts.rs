@@ -28,6 +28,7 @@ pub enum View {
     ConfirmDestructive,
     ConfirmDelete,
     Form,
+    KindPicker,
     Features,
     Connections,
     Editor,
@@ -114,12 +115,19 @@ pub enum Action {
     FormTestConnection,
     FormFieldNext,
     FormFieldPrev,
+    FormFieldDown,
+    FormFieldUp,
     FormFieldLeft,
     FormFieldRight,
     FormFieldHome,
     FormFieldEnd,
     FormFieldBackspace,
-    FormCycleKind,
+    FormKindPickerToggle,
+    FormKindPickerSelect,
+    FormKindPickerNext,
+    FormKindPickerPrev,
+    FormKindPickerBackspace,
+    FormKindPickerClose,
     // features modal
     FeaturesClose,
     FeaturesNext,
@@ -682,15 +690,27 @@ static FORM: &[Binding] = &[
         hidden: false,
     },
     Binding {
-        keys: &[bare(KeyCode::Tab, "Tab"), bare(KeyCode::Down, "↓")],
+        keys: &[bare(KeyCode::Tab, "Tab")],
         label: "next",
         action: Action::FormFieldNext,
         hidden: false,
     },
     Binding {
-        keys: &[bare(KeyCode::BackTab, "Shift+Tab"), bare(KeyCode::Up, "↑")],
+        keys: &[bare(KeyCode::BackTab, "Shift+Tab")],
         label: "prev",
         action: Action::FormFieldPrev,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Down, "↓")],
+        label: "down",
+        action: Action::FormFieldDown,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Up, "↑")],
+        label: "up",
+        action: Action::FormFieldUp,
         hidden: false,
     },
     Binding {
@@ -730,13 +750,57 @@ static FORM: &[Binding] = &[
         hidden: false,
     },
     Binding {
-        // ponytail: Ctrl+K cycles the Type row (Kind). One key, wraps; with
-        // 2 backends it's a toggle. Add to KINDS to extend.
         keys: &[ctrl('k', "Ctrl+K")],
-        label: "type",
-        action: Action::FormCycleKind,
+        label: "pick",
+        action: Action::FormKindPickerToggle,
         hidden: false,
     },
+];
+
+static KIND_PICKER: &[Binding] = &[
+    Binding {
+        keys: &[bare(KeyCode::Enter, "⏎")],
+        label: "select",
+        action: Action::FormKindPickerSelect,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Esc, "Esc")],
+        label: "close",
+        action: Action::FormKindPickerClose,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Down, "↓")],
+        label: "next",
+        action: Action::FormKindPickerNext,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Up, "↑")],
+        label: "prev",
+        action: Action::FormKindPickerPrev,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Backspace, "⌫")],
+        label: "del",
+        action: Action::FormKindPickerBackspace,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Tab, "Tab")],
+        label: "close",
+        action: Action::FormKindPickerClose,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ctrl('k', "Ctrl+K")],
+        label: "close",
+        action: Action::FormKindPickerClose,
+        hidden: false,
+    },
+    // typed chars fall through to raw text input (picker query); no binding.
 ];
 
 static FEATURES: &[Binding] = &[
@@ -806,6 +870,7 @@ fn view_bindings(view: View) -> &'static [Binding] {
         View::ResultsEdit => RESULTS_EDIT,
         View::Schema => SCHEMA,
         View::Form => FORM,
+        View::KindPicker => KIND_PICKER,
         View::Features => FEATURES,
         View::ConfirmDestructive => CONFIRM,
         View::ConfirmDelete => DELETE_CONFIRM,
@@ -841,13 +906,12 @@ pub fn bar_bindings(view: View) -> impl Iterator<Item = &'static Binding> {
 /// Resolve the active view from app state. Modals win over focus; autocomplete
 /// is a sub-mode of the editor. Takes primitives, not `&App`, so this module
 /// stays decoupled from the app.
-// ponytail: 8 boolean flags instead of a struct — each maps 1:1 to a UI state,
-// collapsing them adds ceremony without clarity. ceiling: if a 9th lands, pack
-// them into a `ViewInputs` struct.
+// ponytail: 9 boolean flags; pack into a ViewInputs struct if a 10th lands.
 #[allow(clippy::too_many_arguments)]
 pub fn current_view(
     focus: Focus,
     form: bool,
+    kind_picker: bool,
     features: bool,
     confirm_destructive: bool,
     confirm_delete: bool,
@@ -859,6 +923,8 @@ pub fn current_view(
         View::ConfirmDestructive
     } else if confirm_delete {
         View::ConfirmDelete
+    } else if kind_picker {
+        View::KindPicker
     } else if form {
         View::Form
     } else if features {
@@ -899,13 +965,24 @@ mod tests {
     #[test]
     fn current_view_modal_wins_over_focus_and_autocomplete() {
         assert_eq!(
-            current_view(Focus::Editor, true, true, true, false, true, true, false),
+            current_view(
+                Focus::Editor,
+                true,
+                false,
+                true,
+                true,
+                false,
+                true,
+                true,
+                false
+            ),
             View::ConfirmDestructive
         );
         assert_eq!(
             current_view(
                 Focus::Editor,
                 true,
+                false,
                 false,
                 false,
                 false,
@@ -918,6 +995,7 @@ mod tests {
         assert_eq!(
             current_view(
                 Focus::Editor,
+                false,
                 false,
                 true,
                 false,
@@ -935,6 +1013,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 true,
                 false,
                 false
@@ -944,6 +1023,7 @@ mod tests {
         assert_eq!(
             current_view(
                 Focus::Results,
+                false,
                 false,
                 false,
                 false,
@@ -965,6 +1045,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 true,
                 false
             ),
@@ -974,6 +1055,7 @@ mod tests {
         assert_eq!(
             current_view(
                 Focus::Results,
+                false,
                 false,
                 false,
                 false,
@@ -990,6 +1072,7 @@ mod tests {
                 Focus::Results,
                 false,
                 false,
+                false,
                 true,
                 false,
                 false,
@@ -1002,6 +1085,7 @@ mod tests {
         assert_eq!(
             current_view(
                 Focus::Results,
+                false,
                 false,
                 false,
                 false,
@@ -1190,7 +1274,7 @@ mod tests {
     }
 
     #[test]
-    fn form_tab_and_down_both_advance_field() {
+    fn form_tab_down_up_separate_actions() {
         let v = View::Form;
         assert_eq!(
             match_key(v, k(KeyCode::Tab, KeyModifiers::NONE)),
@@ -1198,7 +1282,11 @@ mod tests {
         );
         assert_eq!(
             match_key(v, k(KeyCode::Down, KeyModifiers::NONE)),
-            Some(Action::FormFieldNext)
+            Some(Action::FormFieldDown)
+        );
+        assert_eq!(
+            match_key(v, k(KeyCode::Up, KeyModifiers::NONE)),
+            Some(Action::FormFieldUp)
         );
         assert_eq!(
             match_key(v, k(KeyCode::BackTab, KeyModifiers::NONE)),

@@ -72,23 +72,59 @@ pub struct EditCellPending {
     pub rows_len: usize,
 }
 
+pub struct KindPickerState {
+    pub query: String,
+    pub filtered: Vec<usize>,
+    pub cursor: usize,
+}
+
+impl KindPickerState {
+    pub fn new() -> Self {
+        Self {
+            query: String::new(),
+            filtered: (0..FormState::KINDS.len()).collect(),
+            cursor: 0,
+        }
+    }
+
+    pub fn set_query(&mut self, query: String) {
+        self.query = query;
+        let q = self.query.to_lowercase();
+        self.filtered = FormState::KINDS
+            .iter()
+            .enumerate()
+            .filter(|(_, k)| k.to_lowercase().contains(&q))
+            .map(|(i, _)| i)
+            .collect();
+        let max = self.filtered.len().saturating_sub(1);
+        if self.cursor > max {
+            self.cursor = max;
+        }
+    }
+
+    pub fn selected_kind(&self) -> Option<&'static str> {
+        let i = *self.filtered.get(self.cursor)?;
+        Some(FormState::KINDS[i])
+    }
+}
+
 pub struct FormState {
     pub kind: String,
     pub fields: [String; 6],
     pub active: usize,
     pub cursor: usize,
     pub edit_index: Option<usize>,
+    pub kind_picker: Option<KindPickerState>,
 }
 
 impl FormState {
     pub const LABELS: [&'static str; 6] = ["Name", "Host", "Port", "User", "Password", "Database"];
-    /// Backend kinds cyclable via the Type row (Ctrl+K). Add a string here +
-    /// a `default_port` arm + an `open` arm + an impl module to add a backend.
+    /// Backend kinds. Add a string here + a `default_port` arm + an `open`
+    /// arm + an impl module to add a backend.
     pub const KINDS: [&'static str; 2] = ["mysql", "postgres"];
 
     /// Default port for a kind — the port field's fallback on parse failure,
-    /// and swapped in automatically when cycling kinds leaves the other kind's
-    /// default in the field.
+    /// and swapped in when selecting a new kind in the picker.
     pub fn default_port(kind: &str) -> u16 {
         match kind {
             "postgres" => 5432,
@@ -110,6 +146,7 @@ impl FormState {
             active: 0,
             cursor: 0,
             edit_index: None,
+            kind_picker: None,
         }
     }
 
@@ -129,22 +166,8 @@ impl FormState {
             active: 0,
             cursor: c.name.len(),
             edit_index: Some(idx),
+            kind_picker: None,
         }
-    }
-
-    /// Cycle the Type row to the next backend kind, swapping the port field if
-    /// it still holds the previous kind's default (so mysql→postgres flips
-    /// 3306→5432). A user-edited port is left alone.
-    pub fn cycle_kind(&mut self) {
-        let i = Self::KINDS
-            .iter()
-            .position(|k| *k == self.kind)
-            .unwrap_or(0);
-        let next = Self::KINDS[(i + 1) % Self::KINDS.len()];
-        if self.fields[2] == Self::default_port(&self.kind).to_string() {
-            self.fields[2] = Self::default_port(next).to_string();
-        }
-        self.kind = next.into();
     }
 }
 

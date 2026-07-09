@@ -182,6 +182,9 @@ pub fn sql_escape(s: &str) -> String {
 }
 
 pub fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
+    if cfg!(test) {
+        return Ok(());
+    }
     use std::io::Write;
     use std::process::{Command, Stdio};
     let cmd = if cfg!(target_os = "macos") {
@@ -190,8 +193,13 @@ pub fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
         ("clip", Vec::<&str>::new())
     } else if std::path::Path::new("/usr/bin/wl-copy").exists() || which("wl-copy") {
         ("wl-copy", Vec::<&str>::new())
-    } else {
+    } else if which("xclip") {
         ("xclip", vec!["-selection", "clipboard"])
+    } else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no clipboard tool found",
+        ));
     };
     let mut child = Command::new(cmd.0)
         .args(&cmd.1)

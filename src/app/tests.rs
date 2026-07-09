@@ -149,23 +149,45 @@ fn build_update_sql_quotes_per_backend() {
 }
 
 #[test]
-fn form_cycle_kind_swaps_port_and_wraps() {
-    use super::FormState;
-    let mut f = FormState::new();
+fn kind_picker_filters_and_selects() {
+    use super::KindPickerState;
+    let mut p = KindPickerState::new();
+    assert_eq!(p.filtered.len(), 2);
+    assert_eq!(p.selected_kind(), Some("mysql"));
+    p.set_query("post".into());
+    assert_eq!(p.filtered, vec![1usize]);
+    assert_eq!(p.selected_kind(), Some("postgres"));
+    p.set_query("xyz".into());
+    assert!(p.filtered.is_empty());
+    assert_eq!(p.selected_kind(), None);
+}
+
+#[test]
+fn kind_picker_port_auto_update() {
+    use super::{FormState, KindPickerState};
+    let mut app = super::App::load().unwrap();
+    app.form = Some(FormState::new());
+    let f = app.form.as_ref().unwrap();
     assert_eq!(f.kind, "mysql");
     assert_eq!(f.fields[2], "3306");
-    // cycling to postgres flips the default port 3306→5432.
-    f.cycle_kind();
+    // Selecting postgres flips the default port 3306→5432.
+    let mut p = KindPickerState::new();
+    p.set_query("post".into());
+    app.form.as_mut().unwrap().kind_picker = Some(p);
+    app.form_kind_picker_select();
+    let f = app.form.as_ref().unwrap();
     assert_eq!(f.kind, "postgres");
     assert_eq!(f.fields[2], "5432");
-    // a user-edited port is preserved across the cycle.
-    f.fields[2] = "6543".into();
-    f.cycle_kind();
-    assert_eq!(f.kind, "mysql");
-    assert_eq!(f.fields[2], "6543");
-    // wraps mysql→postgres→mysql.
-    f.cycle_kind();
+    // A user-edited port is preserved.
+    app.form.as_mut().unwrap().kind_picker = Some(KindPickerState::new());
+    app.form.as_mut().unwrap().fields[2] = "6543".into();
+    let mut p = KindPickerState::new();
+    p.set_query("post".into());
+    app.form.as_mut().unwrap().kind_picker = Some(p);
+    app.form_kind_picker_select();
+    let f = app.form.as_ref().unwrap();
     assert_eq!(f.kind, "postgres");
+    assert_eq!(f.fields[2], "6543");
 }
 
 #[test]
