@@ -196,7 +196,10 @@ pub fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
     } else if which("xclip") {
         ("xclip", vec!["-selection", "clipboard"])
     } else {
-        return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no clipboard tool found"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no clipboard tool found",
+        ));
     };
     let mut child = Command::new(cmd.0)
         .args(&cmd.1)
