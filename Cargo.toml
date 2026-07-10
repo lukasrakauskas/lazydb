@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 default = []
 ssl = ["dep:postgres-native-tls", "dep:native-tls"]
 keychain = ["dep:keyring"]
+mssql = ["dep:tiberius", "dep:tokio", "dep:tokio-util"]
 
 [dependencies]
 ratatui = "0.30"
@@ -24,6 +25,9 @@ neo_frizbee = "0.10"
 sqlformat = "0.5"
 arboard = "3.4"
 keyring = { version = "3", optional = true }
+tiberius = { version = "0.12", default-features = false, features = ["rustls", "tds73"], optional = true }
+tokio = { version = "1", features = ["rt", "macros", "net"], optional = true }
+tokio-util = { version = "0.7", features = ["compat"], optional = true }
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
