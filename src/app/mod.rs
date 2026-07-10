@@ -21,7 +21,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::autocomplete;
 use crate::config::{Config, Features};
-use crate::db::{self, ssh::SshTunnel, CancelSlot, Connection, Database, ExecCtx, StatementResult};
+use crate::db::{self, CancelSlot, Connection, Database, ExecCtx, StatementResult, ssh::SshTunnel};
 use crate::editor::Editor;
 use crate::filter::CellMatches;
 use crate::shortcuts::{self, Action, View};
