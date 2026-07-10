@@ -1,31 +1,14 @@
 # cargo-deny config for lazydb.
 # CI (EmbarkStudios/cargo-deny-action@v2) is the verifier of record.
-# Advisories are denied and no bans are set — both cargo-deny defaults,
-# so only the license allow-list needs to be explicit here.
-#
-# ponytail: RUSTSEC-2026-0103 (wildcard name constraint bypass) and
-# RUSTSEC-2026-0104 (CRL parsing panic) are in rustls-webpki v0.101.7
-# pulled in transitively by tiberius → tokio-rustls → rustls.
-# Neither is reachable: lazydb doesn't parse CRLs or validate TLS
-# certificate chains itself. Fixed in v0.103.x but tiberius pins rustls
-# 0.21. Allowlisted until tiberius upgrades rustls.
 
 [advisories]
 ignore = [
     "RUSTSEC-2026-0103",
     "RUSTSEC-2026-0104",
 ]
-
-[advisories]
-ignore = [
-    "RUSTSEC-2026-0103",
-    "RUSTSEC-2026-0104",
-]
-unmaintained = "allow"
+unmaintained = "none"
 
 [licenses]
-# The `mysql` crate pulls transitive deps (e.g. webpki-roots) that are
-# MPL-2.0, so it must be allowed alongside the usual permissive set.
 allow = [
     "MIT",
     "Apache-2.0",
@@ -39,7 +22,3 @@ allow = [
     "MPL-2.0",
     "BSL-1.0",
 ]
-<<<<<<< HEAD
-=======
-
->>>>>>> 0083ee8 (Fix deny: allow unmaintained crates)
