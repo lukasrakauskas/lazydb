@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-#[cfg(feature = "mssql")]
 pub mod mssql;
 pub mod mysql;
 pub mod postgres;
@@ -139,7 +138,6 @@ pub fn open(conn: &Connection, read_timeout: Option<Duration>) -> Result<Box<dyn
         "mysql" => Ok(mysql::Mysql::open(&conn, read_timeout)?.boxed_clone()),
         "postgres" => Ok(postgres::Postgres::open(&conn, read_timeout)?.boxed_clone()),
         "sqlite" => Ok(sqlite::Sqlite::open(&conn, read_timeout)?.boxed_clone()),
-        #[cfg(feature = "mssql")]
         "mssql" => Ok(mssql::Mssql::open(&conn, read_timeout)?.boxed_clone()),
         other => Err(anyhow::anyhow!("unsupported db kind: {other}")),
     }
@@ -240,18 +238,14 @@ pub fn resolve_password(conn: &Connection) -> String {
         return from_env;
     }
     if conn.use_keychain {
-        #[cfg(feature = "keychain")]
         if let Some(pw) = keychain_get(&conn.name) {
             return pw;
         }
-        #[cfg(not(feature = "keychain"))]
-        crate::log::warn("keychain_disabled", &[("conn", &conn.name)]);
     }
     from_env
 }
 
 /// Store a password in the OS keychain (service="lazydb", account=name).
-#[cfg(feature = "keychain")]
 pub fn keychain_store(name: &str, password: &str) -> Result<()> {
     let entry = keyring::Entry::new("lazydb", name)?;
     entry.set_password(password)?;
@@ -259,7 +253,6 @@ pub fn keychain_store(name: &str, password: &str) -> Result<()> {
 }
 
 /// Read a password from the OS keychain (service="lazydb", account=name).
-#[cfg(feature = "keychain")]
 fn keychain_get(name: &str) -> Option<String> {
     keyring::Entry::new("lazydb", name)
         .ok()
@@ -267,7 +260,6 @@ fn keychain_get(name: &str) -> Option<String> {
 }
 
 /// Delete a password from the OS keychain.
-#[cfg(feature = "keychain")]
 #[allow(dead_code)]
 pub fn keychain_delete(name: &str) -> Result<()> {
     let entry = keyring::Entry::new("lazydb", name)?;

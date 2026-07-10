@@ -102,9 +102,15 @@ pub struct App {
 
 impl App {
     pub fn load() -> Result<Self> {
+        let config = Config::load();
+        let conn_cursor = config
+            .last_connection
+            .filter(|i| *i < config.connections.len())
+            .unwrap_or(0);
         Ok(Self {
-            config: Config::load(),
-            conn_cursor: 0,
+            history: config.history.clone(),
+            config,
+            conn_cursor,
             db: None,
             db_name: None,
             pending_db: None,
@@ -141,7 +147,6 @@ impl App {
             schema_filter_input_open: false,
             schema_cursor: 0,
             schema_expanded: HashSet::new(),
-            history: Vec::new(),
             history_cursor: None,
             history_draft: None,
             edit_cell: None,
@@ -172,6 +177,9 @@ impl App {
         if self.config.connections.is_empty() {
             return;
         }
+        // Persist which connection we're connecting to.
+        self.config.last_connection = Some(self.conn_cursor);
+        let _ = self.config.save();
         let mut conn = self.config.connections[self.conn_cursor].clone();
         if conn.ssh_enabled {
             match SshTunnel::start(&conn) {
@@ -257,6 +265,9 @@ impl App {
             }
             self.history.push(sql.clone());
         }
+        // Persist history to config file after each query.
+        self.config.history = self.history.clone();
+        let _ = self.config.save();
         self.history_cursor = None;
         self.history_draft = None;
         let head: String = sql.chars().take(120).collect();
@@ -315,7 +326,6 @@ impl App {
             query_timeout_secs: None,
         };
         if conn.use_keychain && !conn.password.is_empty() {
-            #[cfg(feature = "keychain")]
             if let Err(e) = crate::db::keychain_store(&conn.name, &conn.password) {
                 self.status = format!("Keychain store failed: {e}");
                 return;

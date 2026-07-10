@@ -22,6 +22,12 @@ pub struct Config {
     pub query_timeout_secs: Option<u64>,
     #[serde(default)]
     pub select_limit: Option<usize>,
+    /// Persistent query history (max 100 entries, newest last).
+    #[serde(default)]
+    pub history: Vec<String>,
+    /// Last connected connection index, restored on next launch.
+    #[serde(default)]
+    pub last_connection: Option<usize>,
 }
 
 /// Togglable app features, persisted in the config file. Add a field + an
@@ -125,6 +131,8 @@ mod tests {
             },
             query_timeout_secs: Some(30),
             select_limit: Some(1000),
+            history: Vec::new(),
+            last_connection: None,
         };
         cfg.save().unwrap();
         let loaded = Config::load();
