@@ -603,6 +603,7 @@ fn form_from_connection_prefills_fields() {
         ssh_port: 22,
         ssh_user: String::new(),
         ssh_keyfile: String::new(),
+        query_timeout_secs: None,
     };
     let f = super::FormState::from_connection(2, &c);
     assert_eq!(f.edit_index, Some(2));
@@ -642,6 +643,7 @@ fn save_form_edits_in_place() {
         ssh_port: 22,
         ssh_user: String::new(),
         ssh_keyfile: String::new(),
+        query_timeout_secs: None,
     });
     app.conn_cursor = 0;
     app.edit_selected();

@@ -44,6 +44,10 @@ pub struct Connection {
     /// Path to SSH identity file (optional, defaults to ~/.ssh/id_*).
     #[serde(default)]
     pub ssh_keyfile: String,
+    /// Per-connection query timeout in seconds. Overrides the global
+    /// `query_timeout_secs` from config. 0 or None = no timeout (wait forever).
+    #[serde(default)]
+    pub query_timeout_secs: Option<u64>,
 }
 
 fn default_ssh_port() -> u16 {
@@ -218,6 +222,7 @@ fn resolve_connection_env(c: &Connection) -> Connection {
         ssh_port: c.ssh_port,
         ssh_user: resolve_env(&c.ssh_user),
         ssh_keyfile: resolve_env(&c.ssh_keyfile),
+        query_timeout_secs: c.query_timeout_secs,
     }
 }
 
