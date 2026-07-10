@@ -152,7 +152,7 @@ fn build_update_sql_quotes_per_backend() {
 fn kind_picker_filters_and_selects() {
     use super::KindPickerState;
     let mut p = KindPickerState::new();
-    assert_eq!(p.filtered.len(), 2);
+    assert_eq!(p.filtered.len(), 3);
     assert_eq!(p.selected_kind(), Some("mysql"));
     p.set_query("post".into());
     assert_eq!(p.filtered, vec![1usize]);

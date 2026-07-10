@@ -42,9 +42,10 @@ Strengths worth preserving: trait-based DB layer, view-aware keymap, background 
       `KILL QUERY` from a side connection. Best-effort (needs PROCESS/SUPER).
 - [x] Configurable query timeout — `query_timeout_secs` in config becomes the
       pool's socket `read_timeout`.
-- [ ] Display all result sets from multi-statement runs, not just the first
-      (tabbed or stacked results).  Deferred: needs an `Output` refactor (active
-      result-set index) — separate ticket.
+- [x] Display all result sets from multi-statement runs, not just the first
+      (Tab/Shift+Tab cycles between them).  Each statement's result is preserved
+      in `ExecutionResult::all_results`; `App` stores the full list and the
+      active index.
 - [x] Row limit guard — `select_limit` in config caps the fetch per result set
       and sets a `truncated` flag shown in the results title. Server-side LIMIT
       injection / pagination deferred (parsing risk).
@@ -82,17 +83,20 @@ Each is a `ponytail:` comment in `src/db/postgres.rs` (the last one in
       `detail()`/`hint()`/SQLSTATE `code()`) — postgres `Error::Display` is
       bare "db error" otherwise. Upgrade: include when a bare message stops
       being enough.
-- [ ] `readable_binary` parity. No-op on postgres: text-protocol bytea already
+- [x] `readable_binary` parity. No-op on postgres: text-protocol bytea already
       renders as `\x..` hex (mysql needs it for its `Value` enum). Only
       relevant again if we move to the binary protocol (raw bytea bytes).
+      `bytes_to_string` is now `pub` and reused by the sqlite backend too.
 - [ ] Quoted-identifier cell edit. `extract_table_name` (`src/app/util.rs`)
       only understands backtick-quoted identifiers (mysql); a postgres query
       like `SELECT * FROM "MixedCase"` won't yield a table name, so cell-edit
       can't build the UPDATE. Upgrade: also strip a leading `"`.
 - [ ] SSL/TLS. Built with `NoTls`; remote/cloud Postgres usually needs it.
       Already tracked above ("SSL/TLS options") — postgres makes it concrete.
-- [ ] SQLite. The natural next backend; `FormState::KINDS` + a `default_port`
-      arm + an `open` arm + one impl module is the whole addition.
+- [x] SQLite. `src/db/sqlite.rs`, `rusqlite` dependency, listed in
+      `FormState::KINDS`, wired in `db::open`. No query cancellation (sync conn,
+      single-thread — `kill_query` returns an error). 6 unit tests (round-trip,
+      schema, primary keys, limit truncation, DML affected-rows).
 
 ## P2 - UX polish
 

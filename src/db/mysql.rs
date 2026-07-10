@@ -3,7 +3,7 @@ use mysql::{Opts, OptsBuilder, Pool, Value, prelude::*};
 use std::collections::HashMap;
 use std::time::Duration;
 
-use super::{Connection, Database, ExecCtx, ExecutionResult};
+use super::{Connection, Database, ExecCtx, ExecutionResult, StatementResult};
 
 pub struct Mysql {
     pool: Pool,
@@ -58,11 +58,11 @@ impl Database for Mysql {
     }
 
     fn execute_script(&self, sql: &str, ctx: &ExecCtx) -> Result<ExecutionResult> {
+        // ponytail: collect every statement's result separately so multi-statement
+        // scripts display all result sets, not just the first. The app shows the
+        // last result set by default and lets the user cycle (Shift+Tab/Tab).
         let mut conn = self.pool.get_conn()?;
-        let mut columns: Vec<String> = Vec::new();
-        let mut rows: Vec<Vec<String>> = Vec::new();
-        let mut rows_affected = 0u64;
-        let mut truncated = false;
+        let mut all_results: Vec<StatementResult> = Vec::new();
         let limit = ctx.limit;
 
         for part in crate::db::sql::split_statements(sql) {
@@ -70,7 +70,6 @@ impl Database for Mysql {
             if part.is_empty() {
                 continue;
             }
-            // Record this connection's id so the UI can KILL QUERY on cancel.
             ctx.cancel.set(conn.connection_id());
             let mut result = conn.query_iter(part)?;
             let set_cols: Vec<String> = result
@@ -81,21 +80,22 @@ impl Database for Mysql {
                 .collect();
 
             if set_cols.is_empty() {
+                // DDL/DML — consume the result then record affected rows.
                 for _ in result.by_ref() {}
+                all_results.push(StatementResult {
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                    rows_affected: result.affected_rows(),
+                    truncated: false,
+                });
             } else {
-                if columns.is_empty() {
-                    columns = set_cols.clone();
-                }
-                // ponytail: row-limit guard caps client memory by stopping the
-                // fetch after `limit` rows. The server still runs the query; a
-                // pushed-down LIMIT needs SQL parsing (risk of corrupting
-                // subqueries/UNION), so this is the safe middle. `truncated`
-                // flags it in the UI. upgrade: server-side LIMIT via a parser.
+                let mut stmt_rows: Vec<Vec<String>> = Vec::new();
+                let mut stmt_truncated = false;
                 for (i, row) in result.by_ref().enumerate() {
                     if let Some(cap) = limit
                         && i >= cap
                     {
-                        truncated = true;
+                        stmt_truncated = true;
                         break;
                     }
                     let row = row?;
@@ -104,22 +104,36 @@ impl Database for Mysql {
                         let v: Value = row.as_ref(k).cloned().unwrap_or(Value::NULL);
                         r.push(value_to_string(v, ctx.readable_binary));
                     }
-                    rows.push(r);
+                    stmt_rows.push(r);
                 }
+                if stmt_truncated {
+                    // Drain the capped result to sync the MySQL protocol.
+                    for _ in result.by_ref() {}
+                }
+                all_results.push(StatementResult {
+                    columns: set_cols,
+                    rows: stmt_rows,
+                    rows_affected: 0,
+                    truncated: stmt_truncated,
+                });
             }
-            rows_affected = result.affected_rows();
             ctx.cancel.clear();
-            if truncated {
-                break;
-            }
         }
 
+        // The last result set becomes the top-level display (backward compat).
+        let last = all_results.last().cloned().unwrap_or(StatementResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            rows_affected: 0,
+            truncated: false,
+        });
         Ok(ExecutionResult {
-            columns,
-            rows,
-            rows_affected,
+            columns: last.columns,
+            rows: last.rows,
+            rows_affected: last.rows_affected,
             elapsed_ms: 0,
-            truncated,
+            truncated: last.truncated,
+            all_results,
         })
     }
 
@@ -169,7 +183,7 @@ fn value_to_string(v: Value, readable_binary: bool) -> String {
     }
 }
 
-fn bytes_to_string(b: &[u8], readable_binary: bool) -> String {
+pub fn bytes_to_string(b: &[u8], readable_binary: bool) -> String {
     if readable_binary {
         // ponytail: valid-UTF8 heuristic — no column-type plumbing. Binary
         // (invalid UTF-8) → UUID if exactly 16 bytes (MySQL BINARY(16) UUID

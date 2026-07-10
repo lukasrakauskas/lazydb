@@ -8,6 +8,7 @@ use std::time::Duration;
 pub mod mysql;
 pub mod postgres;
 pub mod sql;
+pub mod sqlite;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Connection {
     pub name: String,
@@ -24,6 +25,18 @@ pub struct ExecutionResult {
     pub rows: Vec<Vec<String>>,
     pub rows_affected: u64,
     pub elapsed_ms: u128,
+    pub truncated: bool,
+    // ponytail: multi-statement results — keep the last set in columns/rows
+    // for backward compat, and provide the full list for tabbed display.
+    // Only populated when a multi-statement script returns >1 result set.
+    pub all_results: Vec<StatementResult>,
+}
+
+#[derive(Clone)]
+pub struct StatementResult {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    pub rows_affected: u64,
     pub truncated: bool,
 }
 
@@ -88,6 +101,7 @@ pub fn open(conn: &Connection, read_timeout: Option<Duration>) -> Result<Box<dyn
     match conn.kind.as_str() {
         "mysql" => Ok(mysql::Mysql::open(&conn, read_timeout)?.boxed_clone()),
         "postgres" => Ok(postgres::Postgres::open(&conn, read_timeout)?.boxed_clone()),
+        "sqlite" => Ok(sqlite::Sqlite::open(&conn, read_timeout)?.boxed_clone()),
         other => Err(anyhow::anyhow!("unsupported db kind: {other}")),
     }
 }
