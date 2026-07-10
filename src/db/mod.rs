@@ -23,6 +23,12 @@ pub struct Connection {
     /// MySQL uses the built-in TLS support in the `minimal-rust` feature.
     #[serde(default)]
     pub ssl: bool,
+    /// Use OS keychain for password storage instead of plaintext in config.
+    /// Requires the `keychain` feature. When true, the password is stored in
+    /// the OS keychain (service="lazydb", account=connection name) and the
+    /// password field in the config file is empty.
+    #[serde(default)]
+    pub use_keychain: bool,
 }
 
 pub struct ExecutionResult {
@@ -184,10 +190,56 @@ fn resolve_connection_env(c: &Connection) -> Connection {
         host: resolve_env(&c.host),
         port: c.port,
         username: resolve_env(&c.username),
-        password: resolve_env(&c.password),
+        password: resolve_password(c),
         database: resolve_env(&c.database),
         ssl: c.ssl,
+        use_keychain: c.use_keychain,
     }
+}
+
+/// Resolve the password for a connection. Priority:
+/// 1. Environment variable reference (`$VAR` / `${VAR}`)
+/// 2. OS keychain (if `use_keychain` is true and `keychain` feature is enabled)
+/// 3. Literal value from config
+pub fn resolve_password(conn: &Connection) -> String {
+    let from_env = resolve_env(&conn.password);
+    if !from_env.is_empty() {
+        return from_env;
+    }
+    if conn.use_keychain {
+        #[cfg(feature = "keychain")]
+        if let Some(pw) = keychain_get(&conn.name) {
+            return pw;
+        }
+        #[cfg(not(feature = "keychain"))]
+        crate::log::warn("keychain_disabled", &[("conn", &conn.name)]);
+    }
+    from_env
+}
+
+/// Store a password in the OS keychain (service="lazydb", account=name).
+#[cfg(feature = "keychain")]
+pub fn keychain_store(name: &str, password: &str) -> Result<()> {
+    let entry = keyring::Entry::new("lazydb", name)?;
+    entry.set_password(password)?;
+    Ok(())
+}
+
+/// Read a password from the OS keychain (service="lazydb", account=name).
+#[cfg(feature = "keychain")]
+fn keychain_get(name: &str) -> Option<String> {
+    keyring::Entry::new("lazydb", name)
+        .ok()
+        .and_then(|e| e.get_password().ok())
+}
+
+/// Delete a password from the OS keychain.
+#[cfg(feature = "keychain")]
+#[allow(dead_code)]
+pub fn keychain_delete(name: &str) -> Result<()> {
+    let entry = keyring::Entry::new("lazydb", name)?;
+    entry.delete_credential()?;
+    Ok(())
 }
 
 #[cfg(test)]

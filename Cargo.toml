@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 [features]
 default = []
 ssl = ["dep:postgres-native-tls", "dep:native-tls"]
+keychain = ["dep:keyring"]
 
 [dependencies]
 ratatui = "0.30"
@@ -22,6 +23,7 @@ anyhow = "1"
 neo_frizbee = "0.10"
 sqlformat = "0.5"
 arboard = "3.4"
+keyring = { version = "3", optional = true }
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }

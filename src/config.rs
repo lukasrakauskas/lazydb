@@ -112,6 +112,7 @@ mod tests {
                 password: "p@ss".into(),
                 database: "test".into(),
                 ssl: false,
+                use_keychain: false,
             }],
             features: Features {
                 readable_binary: true,
