@@ -3,6 +3,12 @@ name = "lazydb"
 version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "A minimal lazygit-style TUI for databases — MySQL, PostgreSQL, SQLite, MSSQL"
+keywords = ["database", "tui", "terminal", "mysql", "postgresql"]
+categories = ["command-line-utilities", "database"]
+repository = "https://github.com/lukasrakauskas/lazydb"
+homepage = "https://github.com/lukasrakauskas/lazydb"
+rust-version = "1.85"
 
 [features]
 default = []
