@@ -237,10 +237,8 @@ pub fn resolve_password(conn: &Connection) -> String {
     if !from_env.is_empty() {
         return from_env;
     }
-    if conn.use_keychain {
-        if let Some(pw) = keychain_get(&conn.name) {
-            return pw;
-        }
+    if conn.use_keychain && let Some(pw) = keychain_get(&conn.name) {
+        return pw;
     }
     from_env
 }
