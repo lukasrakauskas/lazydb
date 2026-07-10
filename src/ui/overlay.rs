@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
-use crate::app::{App, EditCellState, FormState};
+use crate::app::{App, EditCellState, ExportFormat, FormState};
 use crate::config::Features;
 use crate::theme;
 
@@ -314,6 +314,142 @@ pub(crate) fn draw_confirm_destructive(f: &mut Frame, app: &App, area: Rect) {
         Line::from(" Press  y  to confirm  ·  n / Esc  to cancel"),
     ];
     f.render_widget(Paragraph::new(msg).wrap(Wrap { trim: false }), inner);
+}
+
+/// Cell inspect popup — shows full cell content.
+pub(crate) fn draw_cell_inspect(f: &mut Frame, app: &App, area: Rect) {
+    let Some(inspect) = &app.cell_inspect else {
+        return;
+    };
+    let lines: Vec<&str> = inspect.cell_value.lines().collect();
+    let view_h = 12.min(area.height.saturating_sub(4) as usize);
+    let view_h = view_h.max(3);
+    let w = 72.min(area.width.saturating_sub(4));
+    let h = (view_h + 4).min(area.height as usize) as u16;
+    let x = area.x + (area.width - w) / 2;
+    let y = area.y + (area.height - h) / 2;
+    let pop = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
+    f.render_widget(Clear, pop);
+
+    let scroll = inspect.scroll.min(lines.len().saturating_sub(view_h));
+    let title = format!(
+        " Cell: {}  (row {}, col {})  [Esc: close]",
+        inspect.col_name,
+        inspect.abs_row + 1,
+        inspect.col + 1
+    );
+    let b = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(title)
+        .border_style(theme::FOCUSED_BORDER);
+    let inner = b.inner(pop);
+    f.render_widget(b, pop);
+    let visible: Vec<Line> = lines
+        .iter()
+        .skip(scroll)
+        .take(view_h)
+        .map(|l| Line::from(Span::raw(*l)))
+        .collect();
+    f.render_widget(Paragraph::new(visible).wrap(Wrap { trim: false }), inner);
+}
+
+/// Export input modal — path + format.
+pub(crate) fn draw_export_input(f: &mut Frame, app: &App, area: Rect) {
+    let Some(export) = &app.export_input else {
+        return;
+    };
+    let w = 72.min(area.width);
+    let h = 10.min(area.height);
+    let x = area.x + (area.width - w) / 2;
+    let y = area.y + (area.height - h) / 2;
+    let pop = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
+    f.render_widget(Clear, pop);
+
+    let b = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(" Export Results  (Enter: export, Esc: cancel, Tab: format)")
+        .border_style(theme::FEATURES_BORDER);
+    let inner = b.inner(pop);
+    f.render_widget(b, pop);
+
+    let format_str = ExportFormat::LABELS[export.format as usize];
+    let path_style = Style::default();
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(" Path:  ", theme::FORM_LABEL),
+            Span::styled(export.path.clone(), path_style),
+        ]),
+        Line::from(vec![
+            Span::styled(" Format: ", theme::FORM_LABEL),
+            Span::styled(format_str.to_string(), path_style),
+        ]),
+    ];
+    f.render_widget(Paragraph::new(lines), inner);
+    // cursor on path field
+    let cx = inner.x + 7 + export.cursor as u16;
+    let cy = inner.y;
+    if cx < inner.right() && cy < inner.bottom() {
+        f.set_cursor_position((cx, cy));
+    }
+}
+
+/// Row insert inline modal.
+pub(crate) fn draw_row_insert(f: &mut Frame, app: &App, area: Rect) {
+    let Some(ins) = &app.row_insert else { return };
+    let n = ins.columns.len();
+    let h = (n + 3).min(16) as u16;
+    let w = 80.min(area.width);
+    let x = area.x + (area.width - w) / 2;
+    let y = area.y + (area.height - h) / 2;
+    let pop = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
+    f.render_widget(Clear, pop);
+
+    let b = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(" Insert Row  (Enter: confirm, Tab: field, Esc: cancel)")
+        .border_style(theme::FEATURES_BORDER);
+    let inner = b.inner(pop);
+    f.render_widget(b, pop);
+
+    let mut lines: Vec<Line> = Vec::with_capacity(n);
+    for (i, col) in ins.columns.iter().enumerate() {
+        let val = &ins.values[i];
+        let val_style = if i == ins.cursor_col {
+            theme::FORM_ACTIVE_FIELD
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:>16}: ", col), theme::FORM_LABEL),
+            Span::styled(val.clone(), val_style),
+        ]));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+
+    // cursor
+    let cx = inner.x + 18 + ins.cursor_char as u16;
+    let cy = inner.y + ins.cursor_col as u16;
+    if cx < inner.right() && cy < inner.bottom() {
+        f.set_cursor_position((cx, cy));
+    }
 }
 
 pub(crate) fn draw_confirm_delete(f: &mut Frame, app: &App, area: Rect) {

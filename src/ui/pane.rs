@@ -247,6 +247,7 @@ pub(crate) fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
                 (cr, sr, cc, sc),
                 disp_abs,
                 offsets,
+                app.sort,
             );
             app.results_click_geom = Some(geom);
             app.results_body_h = body_h;

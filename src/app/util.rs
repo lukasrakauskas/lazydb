@@ -144,7 +144,7 @@ pub fn extract_table_name(sql: &str) -> Option<String> {
 /// Identifier quote char for a backend (`mysql` backtick, `postgres`
 /// double-quote). Used by `build_update_sql` so cell-edit emits valid SQL
 /// per backend.
-fn ident_quote(kind: &str) -> char {
+pub fn ident_quote(kind: &str) -> char {
     if kind == "postgres" { '"' } else { '`' }
 }
 

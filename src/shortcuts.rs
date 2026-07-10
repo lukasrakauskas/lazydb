@@ -36,6 +36,9 @@ pub enum View {
     Results,
     ResultsFilter,
     ResultsEdit,
+    ResultsExport,
+    ResultsRowInsert,
+    CellInspect,
     Schema,
 }
 
@@ -93,6 +96,30 @@ pub enum Action {
     Deselect,
     CycleResultNext,
     CycleResultPrev,
+    // results column sort
+    SortColumn,
+    // results cell inspect popup
+    InspectCell,
+    // results file export
+    ExportResult,
+    ExportAccept,
+    ExportCancel,
+    ExportFormatNext,
+    ExportFormatPrev,
+    ExportCursorLeft,
+    ExportCursorRight,
+    ExportBackspace,
+    // results row insert
+    RowInsert,
+    RowInsertAccept,
+    RowInsertCancel,
+    RowInsertFieldLeft,
+    RowInsertFieldRight,
+    RowInsertBackspace,
+    RowInsertFieldPrev,
+    RowInsertFieldNext,
+    // results row delete
+    RowDelete,
     // results fuzzy filter (a transient input mode of the Results view)
     ToggleFilter,
     FilterAccept,
@@ -566,6 +593,36 @@ static RESULTS: &[Binding] = &[
         hidden: false,
     },
     Binding {
+        keys: &[ch('s', "s")],
+        label: "sort",
+        action: Action::SortColumn,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Enter, "⏎")],
+        label: "inspect",
+        action: Action::InspectCell,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ctrl('e', "Ctrl+E")],
+        label: "export",
+        action: Action::ExportResult,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ch('i', "i")],
+        label: "insert row",
+        action: Action::RowInsert,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ch('x', "x")],
+        label: "delete row",
+        action: Action::RowDelete,
+        hidden: false,
+    },
+    Binding {
         keys: &[ctrl('s', "Ctrl+S")],
         label: "copy CSV",
         action: Action::CopyResultCsv,
@@ -581,6 +638,103 @@ static RESULTS: &[Binding] = &[
         keys: &[bare(KeyCode::BackTab, "Shift+Tab")],
         label: "prev-result",
         action: Action::CycleResultPrev,
+        hidden: false,
+    },
+];
+
+static RESULTS_EXPORT: &[Binding] = &[
+    Binding {
+        keys: &[bare(KeyCode::Enter, "⏎")],
+        label: "export",
+        action: Action::ExportAccept,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Esc, "Esc")],
+        label: "cancel",
+        action: Action::ExportCancel,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Tab, "Tab")],
+        label: "fmt-next",
+        action: Action::ExportFormatNext,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::BackTab, "Shift+Tab")],
+        label: "fmt-prev",
+        action: Action::ExportFormatPrev,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Left, "←")],
+        label: "left",
+        action: Action::ExportCursorLeft,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Right, "→")],
+        label: "right",
+        action: Action::ExportCursorRight,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Backspace, "⌫")],
+        label: "del",
+        action: Action::ExportBackspace,
+        hidden: false,
+    },
+];
+
+static CELL_INSPECT: &[Binding] = &[Binding {
+    keys: &[bare(KeyCode::Esc, "Esc")],
+    label: "close",
+    action: Action::Deselect,
+    hidden: false,
+}];
+
+static RESULTS_ROW_INSERT: &[Binding] = &[
+    Binding {
+        keys: &[bare(KeyCode::Enter, "⏎")],
+        label: "insert",
+        action: Action::RowInsertAccept,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Esc, "Esc")],
+        label: "cancel",
+        action: Action::RowInsertCancel,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Left, "←")],
+        label: "left",
+        action: Action::RowInsertFieldLeft,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Right, "→")],
+        label: "right",
+        action: Action::RowInsertFieldRight,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Backspace, "⌫")],
+        label: "del",
+        action: Action::RowInsertBackspace,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Tab, "Tab")],
+        label: "next",
+        action: Action::RowInsertFieldNext,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::BackTab, "Shift+Tab")],
+        label: "prev",
+        action: Action::RowInsertFieldPrev,
         hidden: false,
     },
 ];
@@ -882,6 +1036,9 @@ fn view_bindings(view: View) -> &'static [Binding] {
         View::Results => RESULTS,
         View::ResultsFilter => RESULTS_FILTER,
         View::ResultsEdit => RESULTS_EDIT,
+        View::ResultsExport => RESULTS_EXPORT,
+        View::ResultsRowInsert => RESULTS_ROW_INSERT,
+        View::CellInspect => CELL_INSPECT,
         View::Schema => SCHEMA,
         View::Form => FORM,
         View::KindPicker => KIND_PICKER,
@@ -920,7 +1077,7 @@ pub fn bar_bindings(view: View) -> impl Iterator<Item = &'static Binding> {
 /// Resolve the active view from app state. Modals win over focus; autocomplete
 /// is a sub-mode of the editor. Takes primitives, not `&App`, so this module
 /// stays decoupled from the app.
-// ponytail: 9 boolean flags; pack into a ViewInputs struct if a 10th lands.
+// ponytail: 12 boolean flags; pack into a ViewInputs struct if a 13th lands.
 #[allow(clippy::too_many_arguments)]
 pub fn current_view(
     focus: Focus,
@@ -932,9 +1089,14 @@ pub fn current_view(
     autocomplete: bool,
     filter_input_open: bool,
     edit_cell: bool,
+    export_input: bool,
+    row_insert: bool,
+    cell_inspect: bool,
 ) -> View {
     if confirm_destructive {
         View::ConfirmDestructive
+    } else if cell_inspect {
+        View::CellInspect
     } else if confirm_delete {
         View::ConfirmDelete
     } else if kind_picker {
@@ -943,6 +1105,10 @@ pub fn current_view(
         View::Form
     } else if features {
         View::Features
+    } else if export_input {
+        View::ResultsExport
+    } else if row_insert {
+        View::ResultsRowInsert
     } else if filter_input_open {
         View::ResultsFilter
     } else if edit_cell {
@@ -978,136 +1144,54 @@ mod tests {
 
     #[test]
     fn current_view_modal_wins_over_focus_and_autocomplete() {
+        let f = false;
         assert_eq!(
             current_view(
                 Focus::Editor,
                 true,
-                false,
+                f,
                 true,
                 true,
-                false,
+                f,
                 true,
                 true,
-                false
+                f,
+                f,
+                f,
+                f
             ),
             View::ConfirmDestructive
         );
         assert_eq!(
-            current_view(
-                Focus::Editor,
-                true,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false
-            ),
+            current_view(Focus::Editor, true, f, f, f, f, f, f, f, f, f, f),
             View::Form
         );
         assert_eq!(
-            current_view(
-                Focus::Editor,
-                false,
-                false,
-                true,
-                false,
-                false,
-                false,
-                false,
-                false
-            ),
+            current_view(Focus::Editor, f, f, true, f, f, f, f, f, f, f, f),
             View::Features
         );
         assert_eq!(
-            current_view(
-                Focus::Editor,
-                false,
-                false,
-                false,
-                false,
-                false,
-                true,
-                false,
-                false
-            ),
+            current_view(Focus::Editor, f, f, f, f, f, true, f, f, f, f, f),
             View::EditorAutocomplete
         );
         assert_eq!(
-            current_view(
-                Focus::Results,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false
-            ),
+            current_view(Focus::Results, f, f, f, f, f, f, f, f, f, f, f),
             View::Results
         );
-        // input open → ResultsFilter (typing mode). The "filter applied but
-        // input closed" case (after Accept) is just the line above — Results —
-        // since current_view only takes the open flag, not whether a filter is applied.
         assert_eq!(
-            current_view(
-                Focus::Results,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                true,
-                false
-            ),
+            current_view(Focus::Results, f, f, f, f, f, f, true, f, f, f, f),
             View::ResultsFilter
         );
-        // edit_cell → ResultsEdit
         assert_eq!(
-            current_view(
-                Focus::Results,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                true
-            ),
+            current_view(Focus::Results, f, f, f, f, f, f, f, true, f, f, f),
             View::ResultsEdit
         );
-        // edit_cell loses to modals
         assert_eq!(
-            current_view(
-                Focus::Results,
-                false,
-                false,
-                false,
-                true,
-                false,
-                false,
-                false,
-                true
-            ),
+            current_view(Focus::Results, f, f, f, true, f, f, f, true, f, f, f),
             View::ConfirmDestructive
         );
-        // confirm_delete view
         assert_eq!(
-            current_view(
-                Focus::Results,
-                false,
-                false,
-                false,
-                false,
-                true,
-                false,
-                false,
-                false
-            ),
+            current_view(Focus::Results, f, f, f, f, true, f, f, f, f, f, f),
             View::ConfirmDelete
         );
     }

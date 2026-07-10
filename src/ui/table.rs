@@ -9,7 +9,7 @@ use ratatui::{
     },
 };
 
-use crate::app::ResultsClickGeom;
+use crate::app::{ResultsClickGeom, SortDir, SortState};
 use crate::filter::CellMatches;
 use crate::theme;
 
@@ -69,6 +69,7 @@ fn highlighted_line(s: &str, hits: &[usize]) -> Line<'static> {
     Line::from(spans)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_table(
     f: &mut Frame,
     columns: &[String],
@@ -77,6 +78,7 @@ pub(crate) fn draw_table(
     (cursor_row, scroll_row, cursor_col, scroll_col): (Option<usize>, usize, usize, usize),
     disp_abs: &[usize],
     offsets: Option<&std::collections::HashMap<usize, CellMatches>>,
+    sort: SortState,
 ) -> (usize, usize, ResultsClickGeom) {
     let ncol = columns.len();
     let widths: Vec<usize> = columns
@@ -113,7 +115,11 @@ pub(crate) fn draw_table(
     let mut header_cells: Vec<String> = Vec::with_capacity(vis.len() + 1);
     header_cells.push("#".to_string());
     for &c in &vis {
-        header_cells.push(columns[c].clone());
+        let arrow = sort
+            .filter(|(sc, _)| *sc == c)
+            .map(|(_, d)| if d == SortDir::Asc { " ▲" } else { " ▼" })
+            .unwrap_or("");
+        header_cells.push(format!("{}{}", columns[c], arrow));
     }
     let header =
         Row::new(header_cells).style(Style::default().add_modifier(ratatui::style::Modifier::BOLD));
