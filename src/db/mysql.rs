@@ -313,6 +313,7 @@ mod live {
             ssh_port: 22,
             ssh_user: String::new(),
             ssh_keyfile: String::new(),
+            query_timeout_secs: None,
         })
     }
 

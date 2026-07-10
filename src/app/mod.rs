@@ -187,7 +187,12 @@ impl App {
         } else {
             self.ssh_tunnel = None;
         }
-        match db::open(&conn, self.config.query_timeout()) {
+        let timeout = conn
+            .query_timeout_secs
+            .filter(|&s| s > 0)
+            .map(Duration::from_secs)
+            .or_else(|| self.config.query_timeout());
+        match db::open(&conn, timeout) {
             Ok(db) => {
                 crate::log::info("connect", &[("name", &conn.name)]);
                 self.testing_connection = false;
@@ -307,6 +312,7 @@ impl App {
             ssh_port: 22,
             ssh_user: String::new(),
             ssh_keyfile: String::new(),
+            query_timeout_secs: None,
         };
         if conn.use_keychain && !conn.password.is_empty() {
             #[cfg(feature = "keychain")]
@@ -1424,6 +1430,7 @@ impl App {
             ssh_port: 22,
             ssh_user: String::new(),
             ssh_keyfile: String::new(),
+            query_timeout_secs: None,
         };
         // ponytail: reuse the Ping job — open + SELECT 1. Best-effort: a fresh
         // pool is built just to test; cheap for a one-shot TUI ping.
