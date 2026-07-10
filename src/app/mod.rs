@@ -1900,28 +1900,41 @@ impl App {
             return;
         }
         let path = std::path::Path::new(&export.path);
-        let content = match (&self.output, export.format) {
-            (Output::Table { columns, rows, .. }, ExportFormat::Csv) => {
-                result_to_csv(columns, rows)
-            }
-            (Output::Table { columns, rows, .. }, ExportFormat::Json) => {
-                let objs: Vec<String> = rows.iter().map(|r| row_to_json(columns, r)).collect();
+        // Respect active result filter: export only matching rows.
+        let (columns, all_rows) = match &self.output {
+            Output::Table { columns, rows, .. } => (columns, rows),
+            _ => return,
+        };
+        let filtered_rows: Vec<Vec<String>>;
+        let export_rows: &[Vec<String>] = if let Some(f) = &self.result_filter {
+            filtered_rows = f
+                .matched
+                .iter()
+                .filter_map(|&i| all_rows.get(i).cloned())
+                .collect();
+            &filtered_rows
+        } else {
+            all_rows
+        };
+        let content = match export.format {
+            ExportFormat::Csv => result_to_csv(columns, export_rows),
+            ExportFormat::Json => {
+                let objs: Vec<String> = export_rows
+                    .iter()
+                    .map(|r| row_to_json(columns, r))
+                    .collect();
                 format!("[\n{}\n]", objs.join(",\n"))
             }
-            (Output::Table { columns, rows, .. }, ExportFormat::JsonLines) => rows
+            ExportFormat::JsonLines => export_rows
                 .iter()
                 .map(|r| row_to_json(columns, r))
                 .collect::<Vec<_>>()
                 .join("\n"),
-            _ => return,
         };
+        let n = export_rows.len();
         match std::fs::write(path, &content) {
             Ok(()) => {
-                self.status = format!(
-                    "Exported {} rows to {}.",
-                    content.lines().count(),
-                    export.path
-                );
+                self.status = format!("Exported {n} rows to {}.", export.path);
             }
             Err(e) => {
                 self.status = format!("Export failed: {e}");
