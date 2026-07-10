@@ -699,6 +699,79 @@ fn export_respects_active_filter() {
 }
 
 #[test]
+fn export_filtered_json_exports_matching_rows_only() {
+    let mut app = results_app(10, 2, 5, 2);
+    app.set_filter_query("5");
+    let matched = app.result_filter.as_ref().unwrap().matched.clone();
+    assert!(!matched.is_empty(), "filter should match some rows");
+
+    let tmp = std::env::temp_dir().join(format!("lazydb-export-json-{}", std::process::id()));
+    let path_str = tmp.to_str().unwrap().to_string();
+    app.export_input = Some(ExportInput {
+        path: path_str.clone(),
+        format: ExportFormat::Json,
+        cursor: path_str.len(),
+    });
+    app.confirm_export();
+
+    let content = std::fs::read_to_string(&tmp).unwrap_or_default();
+    // JSON array format: [{...},{...}] — count objects by splitting on `},{`.
+    let trimmed = content.trim();
+    assert!(trimmed.starts_with('['), "JSON export must be an array");
+    assert!(trimmed.ends_with(']'), "JSON export must be an array");
+    let inner = &trimmed[1..trimmed.len().saturating_sub(1)].trim();
+    let n_objects = if inner.is_empty() {
+        0
+    } else {
+        inner.split("},{").count()
+    };
+    assert_eq!(
+        n_objects,
+        matched.len(),
+        "JSON array should contain only filtered rows"
+    );
+    // Each row must contain the filter needle.
+    assert!(content.contains("\"5"), "filtered rows must contain '5'");
+    std::fs::remove_file(&tmp).ok();
+}
+
+#[test]
+fn export_filtered_jsonl_exports_matching_rows_only() {
+    let mut app = results_app(10, 2, 5, 2);
+    app.set_filter_query("5");
+    let matched = app.result_filter.as_ref().unwrap().matched.clone();
+    assert!(!matched.is_empty(), "filter should match some rows");
+
+    let tmp = std::env::temp_dir().join(format!("lazydb-export-jsonl-{}", std::process::id()));
+    let path_str = tmp.to_str().unwrap().to_string();
+    app.export_input = Some(ExportInput {
+        path: path_str.clone(),
+        format: ExportFormat::JsonLines,
+        cursor: path_str.len(),
+    });
+    app.confirm_export();
+
+    let content = std::fs::read_to_string(&tmp).unwrap_or_default();
+    let lines: Vec<&str> = content.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        lines.len(),
+        matched.len(),
+        "JSONL should have one line per filtered row"
+    );
+    for line in &lines {
+        assert!(
+            line.starts_with('{'),
+            "each JSONL line must be an object: {line}"
+        );
+        assert!(
+            line.contains("\"5"),
+            "filtered JSONL row must contain '5': {line}"
+        );
+    }
+    std::fs::remove_file(&tmp).ok();
+}
+
+#[test]
 fn export_without_filter_exports_all_rows() {
     let mut app = results_app(10, 2, 5, 2);
     let tmp = std::env::temp_dir().join(format!("lazydb-export-all-{}", std::process::id()));
