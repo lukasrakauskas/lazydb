@@ -9,6 +9,7 @@ pub mod mysql;
 pub mod postgres;
 pub mod sql;
 pub mod sqlite;
+pub mod ssh;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Connection {
     pub name: String,
@@ -29,6 +30,24 @@ pub struct Connection {
     /// password field in the config file is empty.
     #[serde(default)]
     pub use_keychain: bool,
+    /// SSH tunnel configuration. When ssh_enabled is true, lazydb shells out to
+    /// the system `ssh` command to create a local forward before connecting.
+    #[serde(default)]
+    pub ssh_enabled: bool,
+    #[serde(default)]
+    pub ssh_host: String,
+    /// SSH server port (default 22).
+    #[serde(default = "default_ssh_port")]
+    pub ssh_port: u16,
+    #[serde(default)]
+    pub ssh_user: String,
+    /// Path to SSH identity file (optional, defaults to ~/.ssh/id_*).
+    #[serde(default)]
+    pub ssh_keyfile: String,
+}
+
+fn default_ssh_port() -> u16 {
+    22
 }
 
 pub struct ExecutionResult {
@@ -194,6 +213,11 @@ fn resolve_connection_env(c: &Connection) -> Connection {
         database: resolve_env(&c.database),
         ssl: c.ssl,
         use_keychain: c.use_keychain,
+        ssh_enabled: c.ssh_enabled,
+        ssh_host: resolve_env(&c.ssh_host),
+        ssh_port: c.ssh_port,
+        ssh_user: resolve_env(&c.ssh_user),
+        ssh_keyfile: resolve_env(&c.ssh_keyfile),
     }
 }
 

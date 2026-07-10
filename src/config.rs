@@ -113,6 +113,11 @@ mod tests {
                 database: "test".into(),
                 ssl: false,
                 use_keychain: false,
+                ssh_enabled: false,
+                ssh_host: String::new(),
+                ssh_port: 22,
+                ssh_user: String::new(),
+                ssh_keyfile: String::new(),
             }],
             features: Features {
                 readable_binary: true,
