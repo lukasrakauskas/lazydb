@@ -216,7 +216,7 @@ fn csv_escapes_special_fields() {
     assert_eq!(csv, "a,b\n1,\"x,y\"\n2,\"he said \"\"hi\"\"\"\n");
 }
 
-use super::{App, Focus, Output};
+use super::{App, ExportFormat, ExportInput, Focus, Output};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
     MouseEventKind,
@@ -666,4 +666,52 @@ fn save_form_edits_in_place() {
         unsafe { std::env::remove_var("HOME") }
     }
     std::fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
+fn export_respects_active_filter() {
+    let mut app = results_app(10, 2, 5, 2);
+    // Apply a filter that matches only rows containing "5" in any cell.
+    app.set_filter_query("5");
+    let matched = app.result_filter.as_ref().unwrap().matched.clone();
+    assert!(!matched.is_empty(), "filter should match some rows");
+
+    // Set up the export input pointing to a temp path.
+    let tmp = std::env::temp_dir().join(format!("lazydb-export-filter-{}", std::process::id()));
+    let path_str = tmp.to_str().unwrap().to_string();
+    app.export_input = Some(ExportInput {
+        path: path_str.clone(),
+        format: ExportFormat::Csv,
+        cursor: path_str.len(),
+    });
+    app.confirm_export();
+
+    // Read back and verify only filtered rows were exported.
+    let content = std::fs::read_to_string(&tmp).unwrap_or_default();
+    // CSV header row + data rows.
+    let rows: Vec<&str> = content.lines().collect();
+    assert_eq!(rows.len(), matched.len() + 1, "header + filtered rows");
+    // Each exported row should contain the filter needle "5".
+    for line in &rows[1..] {
+        assert!(line.contains('5'), "filtered row must contain '5': {line}");
+    }
+    std::fs::remove_file(&tmp).ok();
+}
+
+#[test]
+fn export_without_filter_exports_all_rows() {
+    let mut app = results_app(10, 2, 5, 2);
+    let tmp = std::env::temp_dir().join(format!("lazydb-export-all-{}", std::process::id()));
+    let path_str = tmp.to_str().unwrap().to_string();
+    app.export_input = Some(ExportInput {
+        path: path_str.clone(),
+        format: ExportFormat::Csv,
+        cursor: path_str.len(),
+    });
+    app.confirm_export();
+
+    let content = std::fs::read_to_string(&tmp).unwrap_or_default();
+    let rows: Vec<&str> = content.lines().collect();
+    assert_eq!(rows.len(), 11, "header + all 10 rows");
+    std::fs::remove_file(&tmp).ok();
 }
