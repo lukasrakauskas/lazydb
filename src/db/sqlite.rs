@@ -28,7 +28,11 @@ impl Sqlite {
         // ponytail: WAL mode for concurrent reads (rusqlite is single-connection
         // single-threaded, but WAL helps when other processes read the DB).
         c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-        Ok(Self { conn: c, path, timeout: read_timeout })
+        Ok(Self {
+            conn: c,
+            path,
+            timeout: read_timeout,
+        })
     }
 }
 
