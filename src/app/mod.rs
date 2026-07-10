@@ -1930,6 +1930,11 @@ impl App {
                 .map(|r| row_to_json(columns, r))
                 .collect::<Vec<_>>()
                 .join("\n"),
+            ExportFormat::SqlInsert => {
+                let table =
+                    extract_table_name(&self.editor.text()).unwrap_or_else(|| "results".into());
+                result_to_sql_insert(&table, columns, export_rows)
+            }
         };
         let n = export_rows.len();
         match std::fs::write(path, &content) {
@@ -1962,6 +1967,7 @@ impl App {
         export.format = match next {
             1 => ExportFormat::Json,
             2 => ExportFormat::JsonLines,
+            3 => ExportFormat::SqlInsert,
             _ => ExportFormat::Csv,
         };
         let old_path = std::path::Path::new(&export.path);

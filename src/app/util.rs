@@ -224,6 +224,37 @@ fn json_escape(s: &str) -> String {
     out
 }
 
+pub fn result_to_sql_insert(table: &str, columns: &[String], rows: &[Vec<String>]) -> String {
+    let q = '`';
+    let mut out = String::new();
+    let col_list: Vec<String> = columns
+        .iter()
+        .map(|c| format!("{q}{}{q}", c.replace(q, &format!("{q}{q}"))))
+        .collect();
+    let cols_joined = col_list.join(", ");
+    for row in rows {
+        out.push_str("INSERT INTO ");
+        let qc = '`';
+        out.push(qc);
+        out.push_str(&table.replace(qc, &format!("{qc}{qc}")));
+        out.push(qc);
+        out.push_str(" (");
+        out.push_str(&cols_joined);
+        out.push_str(") VALUES (");
+        for i in 0..columns.len() {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let val = row.get(i).map(String::as_str).unwrap_or("");
+            out.push('\'');
+            out.push_str(&sql_escape(val));
+            out.push('\'');
+        }
+        out.push_str(");\n");
+    }
+    out
+}
+
 pub fn result_to_csv(columns: &[String], rows: &[Vec<String>]) -> String {
     let mut out = String::new();
     let mut line = String::new();

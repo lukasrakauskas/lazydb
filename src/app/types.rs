@@ -215,15 +215,17 @@ pub enum ExportFormat {
     Csv,
     Json,
     JsonLines,
+    SqlInsert,
 }
 
 impl ExportFormat {
-    pub const LABELS: [&'static str; 3] = ["CSV", "JSON (array)", "JSON (lines)"];
+    pub const LABELS: [&'static str; 4] = ["CSV", "JSON (array)", "JSON (lines)", "SQL INSERT"];
     pub fn extension(&self) -> &'static str {
         match self {
             Self::Csv => "csv",
             Self::Json => "json",
             Self::JsonLines => "jsonl",
+            Self::SqlInsert => "sql",
         }
     }
 }

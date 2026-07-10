@@ -216,7 +216,7 @@ fn csv_escapes_special_fields() {
     assert_eq!(csv, "a,b\n1,\"x,y\"\n2,\"he said \"\"hi\"\"\"\n");
 }
 
-use super::{App, ExportFormat, ExportInput, Focus, Output};
+use super::{App, ExportFormat, ExportInput, Focus, Output, result_to_sql_insert};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
     MouseEventKind,
@@ -786,5 +786,69 @@ fn export_without_filter_exports_all_rows() {
     let content = std::fs::read_to_string(&tmp).unwrap_or_default();
     let rows: Vec<&str> = content.lines().collect();
     assert_eq!(rows.len(), 11, "header + all 10 rows");
+    std::fs::remove_file(&tmp).ok();
+}
+
+#[test]
+fn sql_insert_produces_valid_statements() {
+    let cols = vec!["id".into(), "name".into()];
+    let rows = vec![
+        vec!["1".into(), "Alice".into()],
+        vec!["2".into(), "Bob's".into()],
+    ];
+    let sql = result_to_sql_insert("users", &cols, &rows);
+    let expected = "\
+INSERT INTO `users` (`id`, `name`) VALUES ('1', 'Alice');
+INSERT INTO `users` (`id`, `name`) VALUES ('2', 'Bob''s');
+";
+    assert_eq!(sql, expected);
+}
+
+#[test]
+fn export_sql_insert_writes_valid_statements() {
+    let mut app = results_app(3, 2, 5, 2);
+    let tmp = std::env::temp_dir().join(format!("lazydb-export-sql-{}", std::process::id()));
+    let path_str = tmp.to_str().unwrap().to_string();
+    app.editor = super::Editor::from_text("SELECT * FROM my_table".into());
+    app.export_input = Some(ExportInput {
+        path: path_str.clone(),
+        format: ExportFormat::SqlInsert,
+        cursor: path_str.len(),
+    });
+    app.confirm_export();
+
+    let content = std::fs::read_to_string(&tmp).unwrap_or_default();
+    assert!(
+        content.contains("INSERT INTO `my_table`"),
+        "should use extracted table name"
+    );
+    assert!(content.contains("(`c0`, `c1`)"), "should include columns");
+    assert_eq!(content.matches("INSERT INTO").count(), 3, "one per row");
+    std::fs::remove_file(&tmp).ok();
+}
+
+#[test]
+fn export_filtered_sql_insert_respects_filter() {
+    let mut app = results_app(10, 2, 5, 2);
+    app.set_filter_query("5");
+    let matched = app.result_filter.as_ref().unwrap().matched.clone();
+    assert!(!matched.is_empty(), "filter should match some rows");
+
+    let tmp = std::env::temp_dir().join(format!("lazydb-export-sql-filter-{}", std::process::id()));
+    let path_str = tmp.to_str().unwrap().to_string();
+    app.export_input = Some(ExportInput {
+        path: path_str.clone(),
+        format: ExportFormat::SqlInsert,
+        cursor: path_str.len(),
+    });
+    app.confirm_export();
+
+    let content = std::fs::read_to_string(&tmp).unwrap_or_default();
+    // Default table name "results" when no editor SQL is set.
+    assert!(
+        content.starts_with("INSERT INTO `results`"),
+        "default table name"
+    );
+    assert_eq!(content.matches("INSERT INTO").count(), matched.len());
     std::fs::remove_file(&tmp).ok();
 }
