@@ -8,7 +8,7 @@ ignore = [
     "RUSTSEC-2026-0103",
     "RUSTSEC-2026-0104",
 ]
-unmaintained = "allow"
+unmaintained = "none"
 
 [licenses]
 # The `mysql` crate pulls transitive deps (e.g. webpki-roots) that are
