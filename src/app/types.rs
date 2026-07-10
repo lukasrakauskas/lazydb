@@ -122,7 +122,7 @@ impl FormState {
     pub const LABELS: [&'static str; 6] = ["Name", "Host", "Port", "User", "Password", "Database"];
     /// Backend kinds. Add a string here + a `default_port` arm + an `open`
     /// arm + an impl module to add a backend.
-    pub const KINDS: [&'static str; 3] = ["mysql", "postgres", "sqlite"];
+    pub const KINDS: [&'static str; 4] = ["mysql", "postgres", "sqlite", "mssql"];
 
     /// Default port for a kind — the port field's fallback on parse failure,
     /// and swapped in when selecting a new kind in the picker.
@@ -130,6 +130,7 @@ impl FormState {
         match kind {
             "postgres" => 5432,
             "sqlite" => 0,
+            "mssql" => 1433,
             _ => 3306,
         }
     }

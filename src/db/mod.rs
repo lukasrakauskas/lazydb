@@ -5,6 +5,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
+#[cfg(feature = "mssql")]
+pub mod mssql;
 pub mod mysql;
 pub mod postgres;
 pub mod sql;
@@ -137,6 +139,8 @@ pub fn open(conn: &Connection, read_timeout: Option<Duration>) -> Result<Box<dyn
         "mysql" => Ok(mysql::Mysql::open(&conn, read_timeout)?.boxed_clone()),
         "postgres" => Ok(postgres::Postgres::open(&conn, read_timeout)?.boxed_clone()),
         "sqlite" => Ok(sqlite::Sqlite::open(&conn, read_timeout)?.boxed_clone()),
+        #[cfg(feature = "mssql")]
+        "mssql" => Ok(mssql::Mssql::open(&conn, read_timeout)?.boxed_clone()),
         other => Err(anyhow::anyhow!("unsupported db kind: {other}")),
     }
 }
