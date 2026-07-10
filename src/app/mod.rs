@@ -21,7 +21,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::autocomplete;
 use crate::config::{Config, Features};
-use crate::db::{self, CancelSlot, Connection, Database, ExecCtx, StatementResult};
+use crate::db::{self, CancelSlot, Connection, Database, ExecCtx, StatementResult, ssh::SshTunnel};
 use crate::editor::Editor;
 use crate::filter::CellMatches;
 use crate::shortcuts::{self, Action, View};
@@ -92,6 +92,8 @@ pub struct App {
     // ponytail: P2 row delete — shares confirm flow.
     #[allow(dead_code)]
     confirm_row_delete: Option<(usize, String, Vec<String>, Vec<String>)>,
+    // ponytail: SSH tunnel subprocess — killed on disconnect/drop.
+    ssh_tunnel: Option<SshTunnel>,
     // ponytail: PR3 resizable editor — height in terminal rows.
     pub editor_height: u16,
     // ponytail: PR3 save-editor path input.
@@ -155,6 +157,7 @@ impl App {
             export_input: None,
             row_insert: None,
             confirm_row_delete: None,
+            ssh_tunnel: None,
             editor_height: 8,
             editor_save_input: None,
         })
@@ -169,7 +172,21 @@ impl App {
         if self.config.connections.is_empty() {
             return;
         }
-        let conn = self.config.connections[self.conn_cursor].clone();
+        let mut conn = self.config.connections[self.conn_cursor].clone();
+        if conn.ssh_enabled {
+            match SshTunnel::start(&conn) {
+                Ok((tuned, tunnel)) => {
+                    conn = tuned;
+                    self.ssh_tunnel = Some(tunnel);
+                }
+                Err(e) => {
+                    self.status = format!("SSH tunnel failed: {e}");
+                    return;
+                }
+            }
+        } else {
+            self.ssh_tunnel = None;
+        }
         match db::open(&conn, self.config.query_timeout()) {
             Ok(db) => {
                 crate::log::info("connect", &[("name", &conn.name)]);
@@ -285,6 +302,11 @@ impl App {
             database: fields[5].clone(),
             ssl: false,
             use_keychain,
+            ssh_enabled: false,
+            ssh_host: String::new(),
+            ssh_port: 22,
+            ssh_user: String::new(),
+            ssh_keyfile: String::new(),
         };
         if conn.use_keychain && !conn.password.is_empty() {
             #[cfg(feature = "keychain")]
@@ -1397,6 +1419,11 @@ impl App {
             database: fields[5].clone(),
             ssl: false,
             use_keychain: false,
+            ssh_enabled: false,
+            ssh_host: String::new(),
+            ssh_port: 22,
+            ssh_user: String::new(),
+            ssh_keyfile: String::new(),
         };
         // ponytail: reuse the Ping job — open + SELECT 1. Best-effort: a fresh
         // pool is built just to test; cheap for a one-shot TUI ping.

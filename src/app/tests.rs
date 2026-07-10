@@ -598,6 +598,11 @@ fn form_from_connection_prefills_fields() {
         database: "d".into(),
         ssl: false,
         use_keychain: false,
+        ssh_enabled: false,
+        ssh_host: String::new(),
+        ssh_port: 22,
+        ssh_user: String::new(),
+        ssh_keyfile: String::new(),
     };
     let f = super::FormState::from_connection(2, &c);
     assert_eq!(f.edit_index, Some(2));
@@ -632,6 +637,11 @@ fn save_form_edits_in_place() {
         database: "d".into(),
         ssl: false,
         use_keychain: false,
+        ssh_enabled: false,
+        ssh_host: String::new(),
+        ssh_port: 22,
+        ssh_user: String::new(),
+        ssh_keyfile: String::new(),
     });
     app.conn_cursor = 0;
     app.edit_selected();
