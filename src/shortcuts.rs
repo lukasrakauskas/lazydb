@@ -39,6 +39,7 @@ pub enum View {
     ResultsExport,
     ResultsRowInsert,
     CellInspect,
+    EditorSave,
     Schema,
 }
 
@@ -85,6 +86,13 @@ pub enum Action {
     EditorEnd,
     RecallHistoryOlder,
     RecallHistoryNewer,
+    SaveBuffer,
+    FormatSql,
+    ExplainQuery,
+    AdjustEditorHeightUp,
+    AdjustEditorHeightDown,
+    SaveBufferAccept,
+    SaveBufferCancel,
     // autocomplete popup (editor sub-mode)
     AcceptCompletion,
     CompletionNext,
@@ -220,6 +228,16 @@ const fn alt(code: KeyCode, d: &'static str) -> KeyPattern {
         display: d,
     }
 }
+/// Ctrl + special key (non-char).
+const fn ctrl_code(code: KeyCode, d: &'static str) -> KeyPattern {
+    KeyPattern {
+        code,
+        require: CTRL,
+        forbid: 0,
+        display: d,
+    }
+}
+
 /// Bare special key (arrows/PgUp/Esc/F-keys). Shift+Tab is a distinct
 /// `BackTab` KeyCode, so `bare(Tab)` still won't match it.
 const fn bare(code: KeyCode, d: &'static str) -> KeyPattern {
@@ -446,6 +464,36 @@ static EDITOR: &[Binding] = &[
         keys: &[bare(KeyCode::Tab, "Tab")],
         label: "focus",
         action: Action::FocusNext,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ctrl('s', "Ctrl+S")],
+        label: "save",
+        action: Action::SaveBuffer,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ctrl('l', "Ctrl+L")],
+        label: "format",
+        action: Action::FormatSql,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ctrl('e', "Ctrl+E")],
+        label: "explain",
+        action: Action::ExplainQuery,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ctrl_code(KeyCode::Up, "Ctrl+↑")],
+        label: "resize↑",
+        action: Action::AdjustEditorHeightUp,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ctrl_code(KeyCode::Down, "Ctrl+↓")],
+        label: "resize↓",
+        action: Action::AdjustEditorHeightDown,
         hidden: false,
     },
 ];
@@ -693,6 +741,39 @@ static CELL_INSPECT: &[Binding] = &[Binding {
     action: Action::Deselect,
     hidden: false,
 }];
+
+static EDITOR_SAVE: &[Binding] = &[
+    Binding {
+        keys: &[bare(KeyCode::Enter, "⏎")],
+        label: "save",
+        action: Action::SaveBufferAccept,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Esc, "Esc")],
+        label: "cancel",
+        action: Action::SaveBufferCancel,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Left, "←")],
+        label: "left",
+        action: Action::ExportCursorLeft,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Right, "→")],
+        label: "right",
+        action: Action::ExportCursorRight,
+        hidden: false,
+    },
+    Binding {
+        keys: &[bare(KeyCode::Backspace, "⌫")],
+        label: "del",
+        action: Action::ExportBackspace,
+        hidden: false,
+    },
+];
 
 static RESULTS_ROW_INSERT: &[Binding] = &[
     Binding {
@@ -1039,6 +1120,7 @@ fn view_bindings(view: View) -> &'static [Binding] {
         View::ResultsExport => RESULTS_EXPORT,
         View::ResultsRowInsert => RESULTS_ROW_INSERT,
         View::CellInspect => CELL_INSPECT,
+        View::EditorSave => EDITOR_SAVE,
         View::Schema => SCHEMA,
         View::Form => FORM,
         View::KindPicker => KIND_PICKER,
@@ -1092,9 +1174,12 @@ pub fn current_view(
     export_input: bool,
     row_insert: bool,
     cell_inspect: bool,
+    editor_save: bool,
 ) -> View {
     if confirm_destructive {
         View::ConfirmDestructive
+    } else if editor_save {
+        View::EditorSave
     } else if cell_inspect {
         View::CellInspect
     } else if confirm_delete {
@@ -1158,40 +1243,41 @@ mod tests {
                 f,
                 f,
                 f,
+                f,
                 f
             ),
             View::ConfirmDestructive
         );
         assert_eq!(
-            current_view(Focus::Editor, true, f, f, f, f, f, f, f, f, f, f),
+            current_view(Focus::Editor, true, f, f, f, f, f, f, f, f, f, f, f),
             View::Form
         );
         assert_eq!(
-            current_view(Focus::Editor, f, f, true, f, f, f, f, f, f, f, f),
+            current_view(Focus::Editor, f, f, true, f, f, f, f, f, f, f, f, f),
             View::Features
         );
         assert_eq!(
-            current_view(Focus::Editor, f, f, f, f, f, true, f, f, f, f, f),
+            current_view(Focus::Editor, f, f, f, f, f, true, f, f, f, f, f, f),
             View::EditorAutocomplete
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, f, f, f, f, f, f, f, f),
+            current_view(Focus::Results, f, f, f, f, f, f, f, f, f, f, f, f),
             View::Results
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, f, f, f, true, f, f, f, f),
+            current_view(Focus::Results, f, f, f, f, f, f, true, f, f, f, f, f),
             View::ResultsFilter
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, f, f, f, f, true, f, f, f),
+            current_view(Focus::Results, f, f, f, f, f, f, f, true, f, f, f, f),
             View::ResultsEdit
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, true, f, f, f, true, f, f, f),
+            current_view(Focus::Results, f, f, f, true, f, f, f, true, f, f, f, f),
             View::ConfirmDestructive
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, f, true, f, f, f, f, f, f),
+            current_view(Focus::Results, f, f, f, f, true, f, f, f, f, f, f, f),
             View::ConfirmDelete
         );
     }
