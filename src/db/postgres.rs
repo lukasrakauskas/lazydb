@@ -1,5 +1,9 @@
 use anyhow::Result;
 use postgres::Client;
+#[cfg(feature = "ssl")]
+use postgres_native_tls::MakeTlsConnector;
+#[cfg(feature = "ssl")]
+use native_tls::TlsConnector as NativeTlsConnector;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -31,6 +35,7 @@ struct PgCfg {
     password: String,
     dbname: String,
     statement_timeout_ms: Option<u64>,
+    ssl: bool,
 }
 
 impl PgCfg {
@@ -46,6 +51,7 @@ impl PgCfg {
             // mysql — the sync `postgres` client exposes no per-query socket
             // timeout. None/0 = no limit (matches mysql's None/0 semantics).
             statement_timeout_ms: read_timeout.map(|d| d.as_millis() as u64),
+            ssl: conn.ssl,
         }
     }
 
@@ -62,7 +68,24 @@ impl PgCfg {
         // worker forever (a hung connect can't be cancelled — kill_query opens
         // a side conn to the same dead host). upgrade: make configurable.
         c.connect_timeout(Duration::from_secs(10));
-        c.connect(postgres::NoTls).map_err(pg_err)
+        if self.ssl {
+            #[cfg(feature = "ssl")]
+            {
+                let connector = MakeTlsConnector::new(
+                    NativeTlsConnector::builder().build()?,
+                );
+                c.connect(connector).map_err(pg_err)
+            }
+            #[cfg(not(feature = "ssl"))]
+            {
+                let _ = c;
+                Err(anyhow::anyhow!(
+                    "SSL requested but lazydb was compiled without --features ssl"
+                ))
+            }
+        } else {
+            c.connect(postgres::NoTls).map_err(pg_err)
+        }
     }
 }
 
@@ -280,6 +303,7 @@ impl Database for Postgres {
                 password: self.cfg.password.clone(),
                 dbname: self.cfg.dbname.clone(),
                 statement_timeout_ms: self.cfg.statement_timeout_ms,
+                ssl: self.cfg.ssl,
             },
             pid: self.pid,
         })
@@ -333,6 +357,7 @@ mod live {
             username: user.to_string(),
             password: pass.to_string(),
             database: db.to_string(),
+            ssl: false,
         })
     }
 

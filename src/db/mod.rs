@@ -18,6 +18,11 @@ pub struct Connection {
     pub username: String,
     pub password: String,
     pub database: String,
+    /// Require TLS for this connection. If the server doesn't support it,
+    /// the connection will fail. PostgreSQL requires the `ssl` feature.
+    /// MySQL uses the built-in TLS support in the `minimal-rust` feature.
+    #[serde(default)]
+    pub ssl: bool,
 }
 
 pub struct ExecutionResult {
@@ -181,6 +186,7 @@ fn resolve_connection_env(c: &Connection) -> Connection {
         username: resolve_env(&c.username),
         password: resolve_env(&c.password),
         database: resolve_env(&c.database),
+        ssl: c.ssl,
     }
 }
 

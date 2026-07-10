@@ -14,8 +14,9 @@ impl Mysql {
         // ponytail: secrets may be `${VAR}` references, resolved in db::open;
         // the literal password here is the resolved value. plaintext at rest is
         // the YAGNI default; env-var references avoid committing secrets.
+        let ssl_mode = if conn.ssl { "REQUIRED" } else { "PREFERRED" };
         let url = format!(
-            "mysql://{}:{}@{}:{}/{}",
+            "mysql://{}:{}@{}:{}/{}?ssl-mode={ssl_mode}",
             pct(&conn.username),
             pct(&conn.password),
             pct(&conn.host),
@@ -321,6 +322,7 @@ mod live {
             username: user.to_string(),
             password: pass.to_string(),
             database: db.to_string(),
+            ssl: false,
         })
     }
 
