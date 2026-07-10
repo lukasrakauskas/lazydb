@@ -7,6 +7,7 @@ pub enum Job {
     Ping(Box<dyn Database>, String),
     Query(Box<dyn Database>, String, ExecCtx),
     Schema(Box<dyn Database>),
+    Views(Box<dyn Database>),
     PrimaryKeys(Box<dyn Database>, String),
     UpdateCell(Box<dyn Database>, String, ExecCtx),
 }
@@ -15,6 +16,7 @@ pub enum JobResult {
     Ping(Result<String, String>),
     Query(Result<ExecutionResult, String>),
     Schema(Result<HashMap<String, Vec<String>>, String>),
+    Views(Result<Vec<String>, String>),
     PrimaryKeys(Result<Vec<String>, String>),
     UpdateCell(Result<ExecutionResult, String>),
 }
@@ -48,6 +50,10 @@ pub fn spawn_job(job: Job) -> Receiver<JobResult> {
             Job::Schema(db) => match db.schema() {
                 Ok(s) => JobResult::Schema(Ok(s)),
                 Err(e) => JobResult::Schema(Err(e.to_string())),
+            },
+            Job::Views(db) => match db.views() {
+                Ok(v) => JobResult::Views(Ok(v)),
+                Err(e) => JobResult::Views(Err(e.to_string())),
             },
             Job::PrimaryKeys(db, table) => match db.primary_keys(&table) {
                 Ok(pks) => JobResult::PrimaryKeys(Ok(pks)),

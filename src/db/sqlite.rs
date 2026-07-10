@@ -46,6 +46,18 @@ impl Database for Sqlite {
         Ok(())
     }
 
+    fn views(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'view' ORDER BY name")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut views = Vec::new();
+        for row in rows {
+            views.push(row?);
+        }
+        Ok(views)
+    }
+
     fn schema(&self) -> Result<HashMap<String, Vec<String>>> {
         let mut stmt = self.conn.prepare(
             "SELECT m.name, p.name FROM sqlite_master m, pragma_table_info(m.name) p \

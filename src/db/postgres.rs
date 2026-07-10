@@ -106,6 +106,25 @@ impl Database for Postgres {
         Ok(())
     }
 
+    fn views(&self) -> Result<Vec<String>> {
+        const SQL: &str = "SELECT table_name FROM information_schema.views WHERE table_schema = current_schema() ORDER BY table_name";
+        let msgs = self
+            .client
+            .lock()
+            .unwrap()
+            .simple_query(SQL)
+            .map_err(pg_err)?;
+        let mut views = Vec::new();
+        for m in &msgs {
+            if let postgres::SimpleQueryMessage::Row(r) = m
+                && let Some(v) = r.get(0)
+            {
+                views.push(v.to_string());
+            }
+        }
+        Ok(views)
+    }
+
     fn schema(&self) -> Result<HashMap<String, Vec<String>>> {
         // ponytail: current_schema() only — tables in other search_path schemas
         // won't appear. Covers the common case (tables in `public`). upgrade:
