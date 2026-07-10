@@ -1,5 +1,9 @@
 # cargo-deny config for lazydb.
 # CI (EmbarkStudios/cargo-deny-action@v2) is the verifier of record.
+# ponytail: rustls-webpki v0.101.x vulns (RUSTSEC-2026-0103/0104) from
+# tiberius→rustls 0.21 and rustls-pemfile (unmaintained) from
+# mysql→rustls-tls are not reachable — lazydb doesn't parse CRLs or
+# validate TLS chains. Allowlisted until upstream upgrades.
 
 [advisories]
 ignore = [
