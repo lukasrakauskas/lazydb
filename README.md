@@ -8,7 +8,7 @@ so adding a backend = one `match` arm in `db::open` + one impl module.
 ## Install
 
 ```sh
-# From source (requires Rust 1.85+)
+# From source (requires Rust 1.95+)
 cargo install lazydb
 
 # Or build from git
