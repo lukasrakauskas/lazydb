@@ -255,19 +255,22 @@ pub fn result_to_sql_insert(table: &str, columns: &[String], rows: &[Vec<String>
     out
 }
 
-pub fn result_to_xlsx(columns: &[String], rows: &[Vec<String>]) -> Vec<u8> {
+pub fn result_to_xlsx(
+    columns: &[String],
+    rows: &[Vec<String>],
+) -> Result<Vec<u8>, rust_xlsxwriter::XlsxError> {
     use rust_xlsxwriter::*;
     let mut wb = Workbook::new();
     let ws = wb.add_worksheet();
     for (c, col) in columns.iter().enumerate() {
-        ws.write_string(0, c as u16, col).ok();
+        ws.write_string(0, c as u16, col)?;
     }
     for (r, row) in rows.iter().enumerate() {
         for (c, val) in row.iter().enumerate() {
-            ws.write_string(r as u32 + 1, c as u16, val).ok();
+            ws.write_string(r as u32 + 1, c as u16, val)?;
         }
     }
-    wb.save_to_buffer().unwrap_or_default()
+    wb.save_to_buffer()
 }
 
 pub fn result_to_csv(columns: &[String], rows: &[Vec<String>]) -> String {

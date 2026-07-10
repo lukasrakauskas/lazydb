@@ -1936,7 +1936,17 @@ impl App {
                     extract_table_name(&self.editor.text()).unwrap_or_else(|| "results".into());
                 result_to_sql_insert(&table, columns, export_rows).into_bytes()
             }
-            ExportFormat::Xlsx => result_to_xlsx(columns, export_rows),
+            ExportFormat::Xlsx => match result_to_xlsx(columns, export_rows) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    self.status = format!("Export failed: {e}");
+                    self.export_input = Some(ExportInput {
+                        cursor: export.path.len(),
+                        ..export
+                    });
+                    return;
+                }
+            },
         };
         let n = export_rows.len();
         match std::fs::write(path, &content) {

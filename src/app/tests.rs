@@ -860,7 +860,7 @@ fn result_to_xlsx_produces_valid_file() {
         vec!["1".into(), "hello".into()],
         vec!["2".into(), "world".into()],
     ];
-    let xlsx = super::result_to_xlsx(&cols, &rows);
+    let xlsx = super::result_to_xlsx(&cols, &rows).expect("xlsx should succeed");
     assert!(xlsx.len() > 200, "xlsx output must be nontrivial");
     assert_eq!(&xlsx[..4], [0x50, 0x4b, 0x03, 0x04], "valid zip magic");
     // Must contain an XML content type entry (uncompressed in the zip).
@@ -896,13 +896,28 @@ fn xlsx_export_creates_valid_file() {
 #[test]
 fn xlsx_export_filtered_respects_filter() {
     let mut app = results_app(10, 2, 5, 2);
+    let unfiltered_tmp =
+        std::env::temp_dir().join(format!("lazydb-export-xlsx-all-{}", std::process::id()));
+    let path_str = unfiltered_tmp.to_str().unwrap().to_string();
+    app.export_input = Some(ExportInput {
+        path: path_str.clone(),
+        format: ExportFormat::Xlsx,
+        cursor: path_str.len(),
+    });
+    app.confirm_export();
+    let unfiltered = std::fs::read(&unfiltered_tmp).unwrap_or_default();
+    assert!(
+        unfiltered.len() > 200,
+        "unfiltered xlsx should be nontrivial"
+    );
+
     app.set_filter_query("5");
     let matched = app.result_filter.as_ref().unwrap().matched.clone();
     assert!(!matched.is_empty(), "filter should match some rows");
 
-    let tmp =
+    let filtered_tmp =
         std::env::temp_dir().join(format!("lazydb-export-xlsx-filter-{}", std::process::id()));
-    let path_str = tmp.to_str().unwrap().to_string();
+    let path_str = filtered_tmp.to_str().unwrap().to_string();
     app.export_input = Some(ExportInput {
         path: path_str.clone(),
         format: ExportFormat::Xlsx,
@@ -910,12 +925,23 @@ fn xlsx_export_filtered_respects_filter() {
     });
     app.confirm_export();
 
-    let content = std::fs::read(&tmp).unwrap_or_default();
-    assert!(!content.is_empty(), "xlsx export should produce data");
+    let filtered = std::fs::read(&filtered_tmp).unwrap_or_default();
+    assert!(
+        !filtered.is_empty(),
+        "filtered xlsx export should produce data"
+    );
     assert_eq!(
-        &content[..4],
+        &filtered[..4],
         [0x50, 0x4b, 0x03, 0x04],
         "valid xlsx zip magic"
     );
-    std::fs::remove_file(&tmp).ok();
+    // Filtered file should be smaller than unfiltered (1 row vs 10 rows).
+    assert!(
+        filtered.len() < unfiltered.len(),
+        "filtered xlsx ({}) should be smaller than unfiltered ({})",
+        filtered.len(),
+        unfiltered.len()
+    );
+    std::fs::remove_file(&unfiltered_tmp).ok();
+    std::fs::remove_file(&filtered_tmp).ok();
 }
