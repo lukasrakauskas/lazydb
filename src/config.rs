@@ -111,6 +111,7 @@ mod tests {
                 username: "root".into(),
                 password: "p@ss".into(),
                 database: "test".into(),
+                ssl: false,
             }],
             features: Features {
                 readable_binary: true,

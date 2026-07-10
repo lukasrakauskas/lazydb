@@ -596,6 +596,7 @@ fn form_from_connection_prefills_fields() {
         username: "u".into(),
         password: "p".into(),
         database: "d".into(),
+        ssl: false,
     };
     let f = super::FormState::from_connection(2, &c);
     assert_eq!(f.edit_index, Some(2));
@@ -628,6 +629,7 @@ fn save_form_edits_in_place() {
         username: "u".into(),
         password: "p".into(),
         database: "d".into(),
+        ssl: false,
     });
     app.conn_cursor = 0;
     app.edit_selected();

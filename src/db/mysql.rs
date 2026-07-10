@@ -1,5 +1,5 @@
 use anyhow::Result;
-use mysql::{Opts, OptsBuilder, Pool, Value, prelude::*};
+use mysql::{OptsBuilder, Pool, SslOpts, Value, prelude::*};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -14,19 +14,16 @@ impl Mysql {
         // ponytail: secrets may be `${VAR}` references, resolved in db::open;
         // the literal password here is the resolved value. plaintext at rest is
         // the YAGNI default; env-var references avoid committing secrets.
-        let url = format!(
-            "mysql://{}:{}@{}:{}/{}",
-            pct(&conn.username),
-            pct(&conn.password),
-            pct(&conn.host),
-            conn.port,
-            pct(&conn.database),
-        );
-        // ponytail: read_timeout is the query timeout — a socket-level cap set
-        // once on the pool. Per-query timeout would need a fresh conn per query;
-        // a per-connection default from config covers the TUI's one-at-a-time use.
         let pool = {
-            let mut b = OptsBuilder::from_opts(Opts::from_url(&url)?);
+            let mut b = OptsBuilder::new()
+                .ip_or_hostname(Some(conn.host.as_str()))
+                .tcp_port(conn.port)
+                .user(Some(conn.username.as_str()))
+                .pass(Some(conn.password.as_str()))
+                .db_name(Some(conn.database.as_str()));
+            if conn.ssl {
+                b = b.ssl_opts(Some(SslOpts::default()));
+            }
             if let Some(t) = read_timeout {
                 b = b.read_timeout(Some(t));
             }
@@ -235,18 +232,6 @@ fn bin_to_uuid(b: &[u8]) -> String {
     )
 }
 
-fn pct(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for &b in s.as_bytes() {
-        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("%{:02X}", b));
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::bytes_to_string;
@@ -321,6 +306,7 @@ mod live {
             username: user.to_string(),
             password: pass.to_string(),
             database: db.to_string(),
+            ssl: false,
         })
     }
 

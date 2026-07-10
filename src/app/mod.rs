@@ -282,6 +282,7 @@ impl App {
             username: fields[3].clone(),
             password: fields[4].clone(),
             database: fields[5].clone(),
+            ssl: false,
         };
         if let Some(i) = edit_index.filter(|i| *i < self.config.connections.len()) {
             self.config.connections[i] = conn;
@@ -1384,6 +1385,7 @@ impl App {
             username: fields[3].clone(),
             password: fields[4].clone(),
             database: fields[5].clone(),
+            ssl: false,
         };
         // ponytail: reuse the Ping job — open + SELECT 1. Best-effort: a fresh
         // pool is built just to test; cheap for a one-shot TUI ping.

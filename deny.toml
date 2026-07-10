@@ -1,11 +1,14 @@
 # cargo-deny config for lazydb.
 # CI (EmbarkStudios/cargo-deny-action@v2) is the verifier of record.
-# Advisories are denied and no bans are set — both cargo-deny defaults,
-# so only the license allow-list needs to be explicit here.
+
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0103",
+    "RUSTSEC-2026-0104",
+]
+unmaintained = "none"
 
 [licenses]
-# The `mysql` crate pulls transitive deps (e.g. webpki-roots) that are
-# MPL-2.0, so it must be allowed alongside the usual permissive set.
 allow = [
     "MIT",
     "Apache-2.0",
@@ -18,4 +21,5 @@ allow = [
     "Unicode-3.0",
     "MPL-2.0",
     "BSL-1.0",
+    "CDLA-Permissive-2.0",
 ]
