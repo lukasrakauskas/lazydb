@@ -539,7 +539,12 @@ pub(crate) fn draw_help(f: &mut Frame, _app: &App, area: Rect) {
     let h = (area.height - 4).min(36);
     let x = area.x + (area.width - w) / 2;
     let y = area.y + (area.height - h) / 2;
-    let pop = Rect { x, y, width: w, height: h };
+    let pop = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
     f.render_widget(Clear, pop);
     let b = Block::default()
         .borders(Borders::ALL)

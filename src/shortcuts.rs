@@ -1098,14 +1098,12 @@ static KIND_PICKER: &[Binding] = &[
     // typed chars fall through to raw text input (picker query); no binding.
 ];
 
-static HELP: &[Binding] = &[
-    Binding {
-        keys: &[bare(KeyCode::Esc, "Esc"), ch('q', "q"), ch('?', "?")],
-        label: "close",
-        action: Action::ToggleHelp,
-        hidden: false,
-    },
-];
+static HELP: &[Binding] = &[Binding {
+    keys: &[bare(KeyCode::Esc, "Esc"), ch('q', "q"), ch('?', "?")],
+    label: "close",
+    action: Action::ToggleHelp,
+    hidden: false,
+}];
 
 static FEATURES: &[Binding] = &[
     Binding {
@@ -1308,6 +1306,7 @@ mod tests {
                 f,
                 f,
                 f,
+                f,
                 f
             ),
             View::ConfirmDestructive
@@ -1337,7 +1336,23 @@ mod tests {
             View::ResultsEdit
         );
         assert_eq!(
-            current_view(Focus::Results, f, f, f, true, f, f, f, true, f, f, f, f, f, f),
+            current_view(
+                Focus::Results,
+                f,
+                f,
+                f,
+                true,
+                f,
+                f,
+                f,
+                true,
+                f,
+                f,
+                f,
+                f,
+                f,
+                f
+            ),
             View::ConfirmDestructive
         );
         assert_eq!(

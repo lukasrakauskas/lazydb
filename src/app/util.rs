@@ -186,12 +186,9 @@ pub fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
         return Ok(());
     }
     // ponytail: arboard crate, falls back to shell-out on headless/disconnected
-    let mut ctx = arboard::Clipboard::new().map_err(|e| {
-        std::io::Error::other(e.to_string())
-    })?;
-    ctx.set_text(text).map_err(|e| {
-        std::io::Error::other(e.to_string())
-    })
+    let mut ctx = arboard::Clipboard::new().map_err(|e| std::io::Error::other(e.to_string()))?;
+    ctx.set_text(text)
+        .map_err(|e| std::io::Error::other(e.to_string()))
 }
 
 pub fn row_to_json(columns: &[String], row: &[String]) -> String {
