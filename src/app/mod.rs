@@ -883,6 +883,8 @@ impl App {
             self.result_scroll_row = 0;
             self.result_cursor_col = 0;
             self.result_scroll_col = 0;
+            self.result_filter = None;
+            self.filter_input_open = false;
         }
     }
 

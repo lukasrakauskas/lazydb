@@ -1,13 +1,15 @@
 use anyhow::Result;
 use rusqlite::Connection;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::{Connection as DbConn, Database, ExecCtx, ExecutionResult, StatementResult};
 
 pub struct Sqlite {
     conn: Connection,
+    path: PathBuf,
+    timeout: Option<Duration>,
 }
 
 impl Sqlite {
@@ -19,14 +21,14 @@ impl Sqlite {
         } else {
             Path::new(&conn.host).join(&conn.database)
         };
-        let c = Connection::open(path)?;
+        let c = Connection::open(&path)?;
         if let Some(t) = read_timeout {
             c.busy_timeout(t)?;
         }
         // ponytail: WAL mode for concurrent reads (rusqlite is single-connection
         // single-threaded, but WAL helps when other processes read the DB).
         c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-        Ok(Self { conn: c })
+        Ok(Self { conn: c, path, timeout: read_timeout })
     }
 }
 
@@ -134,9 +136,8 @@ impl Database for Sqlite {
                 rows_affected: 0,
                 truncated: stmt_truncated,
             });
-            if stmt_truncated {
-                break;
-            }
+            // ponytail: truncated caps row collection for this result set only;
+            // subsequent split statements still execute.
         }
 
         let last = all_results.last().cloned().unwrap_or(StatementResult {
@@ -177,14 +178,18 @@ impl Database for Sqlite {
     }
 
     fn boxed_clone(&self) -> Box<dyn Database> {
-        // ponytail: sqlite connection is not clonable; open a new connection to
-        // the same file. This works for the TUI's one-at-a-time usage pattern
-        // (the clone is used for the kill_query side-channel, so errors silently).
-        // upgrade: Wrap in Arc<Mutex<Connection>> like postgres.
-        let path = self.conn.path().map(|p| p.to_string()).unwrap_or_default();
-        let new_conn = Connection::open(&path).ok();
+        let c = Connection::open(&self.path)
+            .expect("failed to clone SQLite connection — check file permissions and disk space");
+        if let Some(t) = self.timeout {
+            c.busy_timeout(t)
+                .expect("failed to set busy_timeout on cloned SQLite connection");
+        }
+        c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+            .expect("failed to apply PRAGMAs on cloned SQLite connection");
         Box::new(Self {
-            conn: new_conn.unwrap_or_else(|| Connection::open_in_memory().unwrap()),
+            conn: c,
+            path: self.path.clone(),
+            timeout: self.timeout,
         })
     }
 }
@@ -291,6 +296,8 @@ mod tests {
     fn make_temp_db() -> Sqlite {
         Sqlite {
             conn: Connection::open_in_memory().unwrap(),
+            path: PathBuf::new(),
+            timeout: None,
         }
     }
 }

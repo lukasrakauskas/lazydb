@@ -153,6 +153,12 @@ impl Database for Postgres {
 
             for m in &msgs {
                 match m {
+                    postgres::SimpleQueryMessage::RowDescription(cols) => {
+                        had_result_set = true;
+                        if stmt_columns.is_empty() {
+                            stmt_columns = cols.iter().map(|c| c.name().to_string()).collect();
+                        }
+                    }
                     postgres::SimpleQueryMessage::Row(r) => {
                         had_result_set = true;
                         if stmt_columns.is_empty() {
@@ -182,9 +188,8 @@ impl Database for Postgres {
                 rows_affected: stmt_affected,
                 truncated: stmt_truncated,
             });
-            if stmt_truncated {
-                break;
-            }
+            // ponytail: truncated only caps row collection for this result set;
+            // subsequent split statements still execute.
         }
 
         let last = all_results.last().cloned().unwrap_or(StatementResult {

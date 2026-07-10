@@ -106,16 +106,16 @@ impl Database for Mysql {
                     }
                     stmt_rows.push(r);
                 }
+                if stmt_truncated {
+                    // Drain the capped result to sync the MySQL protocol.
+                    for _ in result.by_ref() {}
+                }
                 all_results.push(StatementResult {
                     columns: set_cols,
                     rows: stmt_rows,
                     rows_affected: 0,
                     truncated: stmt_truncated,
                 });
-                if stmt_truncated {
-                    ctx.cancel.clear();
-                    break;
-                }
             }
             ctx.cancel.clear();
         }
