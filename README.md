@@ -2,8 +2,40 @@
 
 A minimal lazygit-style TUI for databases. Built with Rust + ratatui.
 
-Supports **MySQL** and **PostgreSQL**. The DB layer is a single trait (`src/db/mod.rs`),
+Supports **MySQL**, **PostgreSQL**, **SQLite**, and **MSSQL**. The DB layer is a single trait (`src/db/mod.rs`),
 so adding a backend = one `match` arm in `db::open` + one impl module.
+
+## Install
+
+```sh
+# From source (requires Rust 1.85+)
+cargo install lazydb
+
+# Or build from git
+cargo install --git https://github.com/lukasrakauskas/lazydb
+
+# Run from this repo
+cargo run
+```
+
+Pre-built binaries for Linux, macOS (x86_64 + ARM), and Windows are
+available on the [Releases](https://github.com/lukasrakauskas/lazydb/releases) page.
+
+### Optional features
+
+```sh
+# SSL/TLS for PostgreSQL (native-tls)
+cargo install lazydb --features ssl
+
+# OS keychain for password storage
+cargo install lazydb --features keychain
+
+# MSSQL backend (tiberius + tokio)
+cargo install lazydb --features mssql
+
+# All extras
+cargo install lazydb --features ssl,keychain,mssql
+```
 
 ## Features
 
@@ -14,6 +46,11 @@ so adding a backend = one `match` arm in `db::open` + one impl module.
 - Togglable features modal (`f`) — settings persist in the config file
   - **Readable binary fields**: render binary columns readably — 16-byte values as UUIDs (`BIN_TO_UUID` style, e.g. `01b4e92f-…`), other binaries as hex (`0x…`); valid-UTF8 bytes pass through as text
 - Optional: `lazydb path/to/script.sql` preloads the editor
+- SSL/TLS for PostgreSQL (requires `--features ssl`)
+- OS keychain integration (requires `--features keychain`)
+- SSH tunneling via system `ssh` command (no extra deps)
+- Per-connection query timeout
+- MSSQL backend (requires `--features mssql`)
 
 ## Run
 
