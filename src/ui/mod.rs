@@ -78,6 +78,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.editor_save_input.is_some() {
         overlay::draw_save_editor(f, app, f.area());
     }
+
+    if app.show_help {
+        overlay::draw_help(f, app, f.area());
+    }
 }
 
 fn block<'a>(title: &'a str, num: &'a str, focused: bool) -> Block<'a> {
