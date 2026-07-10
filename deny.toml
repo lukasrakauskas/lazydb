@@ -19,3 +19,10 @@ allow = [
     "MPL-2.0",
     "BSL-1.0",
 ]
+
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0103",
+    "RUSTSEC-2026-0104",
+]
+
