@@ -19,7 +19,7 @@ mssql = ["dep:tiberius", "dep:tokio", "dep:tokio-util"]
 [dependencies]
 ratatui = "0.30"
 crossterm = "0.28"
-mysql = { version = "25", default-features = false, features = ["minimal-rust"] }
+mysql = { version = "25", default-features = false, features = ["minimal-rust", "rustls-tls"] }
 postgres = { version = "0.19", default-features = false }
 postgres-native-tls = { version = "0.5", optional = true }
 native-tls = { version = "0.2", optional = true }
