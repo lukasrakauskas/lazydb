@@ -1916,25 +1916,37 @@ impl App {
         } else {
             all_rows
         };
-        let content = match export.format {
-            ExportFormat::Csv => result_to_csv(columns, export_rows),
+        let content: Vec<u8> = match export.format {
+            ExportFormat::Csv => result_to_csv(columns, export_rows).into_bytes(),
             ExportFormat::Json => {
                 let objs: Vec<String> = export_rows
                     .iter()
                     .map(|r| row_to_json(columns, r))
                     .collect();
-                format!("[\n{}\n]", objs.join(",\n"))
+                format!("[\n{}\n]", objs.join(",\n")).into_bytes()
             }
             ExportFormat::JsonLines => export_rows
                 .iter()
                 .map(|r| row_to_json(columns, r))
                 .collect::<Vec<_>>()
-                .join("\n"),
+                .join("\n")
+                .into_bytes(),
             ExportFormat::SqlInsert => {
                 let table =
                     extract_table_name(&self.editor.text()).unwrap_or_else(|| "results".into());
-                result_to_sql_insert(&table, columns, export_rows)
+                result_to_sql_insert(&table, columns, export_rows).into_bytes()
             }
+            ExportFormat::Xlsx => match result_to_xlsx(columns, export_rows) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    self.status = format!("Export failed: {e}");
+                    self.export_input = Some(ExportInput {
+                        cursor: export.path.len(),
+                        ..export
+                    });
+                    return;
+                }
+            },
         };
         let n = export_rows.len();
         match std::fs::write(path, &content) {
@@ -1968,6 +1980,7 @@ impl App {
             1 => ExportFormat::Json,
             2 => ExportFormat::JsonLines,
             3 => ExportFormat::SqlInsert,
+            4 => ExportFormat::Xlsx,
             _ => ExportFormat::Csv,
         };
         let old_path = std::path::Path::new(&export.path);
