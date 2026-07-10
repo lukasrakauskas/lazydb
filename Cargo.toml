@@ -28,6 +28,7 @@ keyring = "3"
 tiberius = { version = "0.12", default-features = false, features = ["rustls", "tds73"] }
 tokio = { version = "1", features = ["rt", "macros", "net"] }
 tokio-util = { version = "0.7", features = ["compat"] }
+rust_xlsxwriter = "0.96"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
