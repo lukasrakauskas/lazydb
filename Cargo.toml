@@ -13,7 +13,7 @@ rust-version = "1.85"
 [dependencies]
 ratatui = "0.30"
 crossterm = "0.28"
-mysql = { version = "25", default-features = false, features = ["minimal-rust"] }
+mysql = { version = "25", default-features = false, features = ["minimal-rust", "rustls-tls"] }
 postgres = { version = "0.19", default-features = false }
 postgres-native-tls = "0.5"
 native-tls = "0.2"
