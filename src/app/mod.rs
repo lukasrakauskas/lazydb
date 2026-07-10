@@ -397,7 +397,10 @@ impl App {
                 Ok(views) => {
                     let n = self.schema.len();
                     self.schema_views = views;
-                    self.status = format!("Schema loaded: {n} tables, {} views.", self.schema_views.len());
+                    self.status = format!(
+                        "Schema loaded: {n} tables, {} views.",
+                        self.schema_views.len()
+                    );
                 }
                 Err(e) => self.status = format!("Views load failed: {e}"),
             },
@@ -673,10 +676,7 @@ impl App {
                 (Some(_), true) => self.clear_schema_filter(),
             },
             SchemaFilterAccept => {
-                let empty = self
-                    .schema_filter
-                    .as_ref()
-                    .is_none_or(|q| q.is_empty());
+                let empty = self.schema_filter.as_ref().is_none_or(|q| q.is_empty());
                 if empty {
                     self.clear_schema_filter();
                 } else {

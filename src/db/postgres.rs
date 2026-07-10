@@ -108,7 +108,12 @@ impl Database for Postgres {
 
     fn views(&self) -> Result<Vec<String>> {
         const SQL: &str = "SELECT table_name FROM information_schema.views WHERE table_schema = current_schema() ORDER BY table_name";
-        let msgs = self.client.lock().unwrap().simple_query(SQL).map_err(pg_err)?;
+        let msgs = self
+            .client
+            .lock()
+            .unwrap()
+            .simple_query(SQL)
+            .map_err(pg_err)?;
         let mut views = Vec::new();
         for m in &msgs {
             if let postgres::SimpleQueryMessage::Row(r) = m

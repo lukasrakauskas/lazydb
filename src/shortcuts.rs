@@ -1273,7 +1273,22 @@ mod tests {
     fn current_view_modal_wins_over_focus_and_autocomplete() {
         let f = false;
         assert_eq!(
-            current_view(Focus::Editor, true, f, true, true, f, true, true, f, f, f, f, f, f),
+            current_view(
+                Focus::Editor,
+                true,
+                f,
+                true,
+                true,
+                f,
+                true,
+                true,
+                f,
+                f,
+                f,
+                f,
+                f,
+                f
+            ),
             View::ConfirmDestructive
         );
         assert_eq!(

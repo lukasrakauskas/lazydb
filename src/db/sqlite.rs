@@ -47,7 +47,9 @@ impl Database for Sqlite {
     }
 
     fn views(&self) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare("SELECT name FROM sqlite_master WHERE type = 'view' ORDER BY name")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'view' ORDER BY name")?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         let mut views = Vec::new();
         for row in rows {

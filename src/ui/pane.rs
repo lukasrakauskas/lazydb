@@ -49,7 +49,11 @@ pub(crate) fn draw_connections(f: &mut Frame, app: &App, area: Rect) {
 pub(crate) fn draw_schema(f: &mut Frame, app: &App, area: Rect) {
     let n = app.schema.len();
     let nv = app.schema_views.len();
-    let filter_suffix = app.schema_filter.as_ref().map(|q| format!("  ·  filter: '{q}'")).unwrap_or_default();
+    let filter_suffix = app
+        .schema_filter
+        .as_ref()
+        .map(|q| format!("  ·  filter: '{q}'"))
+        .unwrap_or_default();
     let title = format!("Schema  ·  {n} tables, {nv} views{filter_suffix}");
     let b = block(&title, "4", app.focus == Focus::Schema);
     let inner = b.inner(area);
@@ -107,9 +111,7 @@ pub(crate) fn draw_schema(f: &mut Frame, app: &App, area: Rect) {
                     };
                     Line::from(Span::styled(format!(" {mark} {t}"), style))
                 }
-                SchemaEntry::View(v) => {
-                    Line::from(Span::styled(format!("  ◇ {v}"), style))
-                }
+                SchemaEntry::View(v) => Line::from(Span::styled(format!("  ◇ {v}"), style)),
                 SchemaEntry::Leaf { opt, .. } => {
                     let label = match opt {
                         SchemaOpt::Rows => "rows",
