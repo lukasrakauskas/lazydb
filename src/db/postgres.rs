@@ -1,8 +1,6 @@
 use anyhow::Result;
-#[cfg(feature = "ssl")]
 use native_tls::TlsConnector as NativeTlsConnector;
 use postgres::Client;
-#[cfg(feature = "ssl")]
 use postgres_native_tls::MakeTlsConnector;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -69,18 +67,8 @@ impl PgCfg {
         // a side conn to the same dead host). upgrade: make configurable.
         c.connect_timeout(Duration::from_secs(10));
         if self.ssl {
-            #[cfg(feature = "ssl")]
-            {
-                let connector = MakeTlsConnector::new(NativeTlsConnector::builder().build()?);
-                c.connect(connector).map_err(pg_err)
-            }
-            #[cfg(not(feature = "ssl"))]
-            {
-                let _ = c;
-                Err(anyhow::anyhow!(
-                    "SSL requested but lazydb was compiled without --features ssl"
-                ))
-            }
+            let connector = MakeTlsConnector::new(NativeTlsConnector::builder().build()?);
+            c.connect(connector).map_err(pg_err)
         } else {
             c.connect(postgres::NoTls).map_err(pg_err)
         }

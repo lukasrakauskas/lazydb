@@ -326,7 +326,6 @@ impl App {
             query_timeout_secs: None,
         };
         if conn.use_keychain && !conn.password.is_empty() {
-            #[cfg(feature = "keychain")]
             if let Err(e) = crate::db::keychain_store(&conn.name, &conn.password) {
                 self.status = format!("Keychain store failed: {e}");
                 return;
