@@ -33,7 +33,7 @@ Strengths worth preserving: trait-based DB layer, view-aware keymap, background 
       auto-swaps with the kind. Landed with the postgres backend.
 - [x] Test-connection button in the form (reuse existing Ping job).  `Ctrl+T` in
       the form opens + pings; result shows in the status line.
-- [ ] SSL/TLS options.
+- [x] SSL/TLS options.
 
 ### Query execution
 
@@ -132,15 +132,15 @@ Each is a `ponytail:` comment in `src/db/postgres.rs` (the last one in
       toggle to a hidden flag.
 - [ ] `--help`/`--version` CLI flags (clap or hand-rolled).
 - [ ] Built-in clipboard (arboard/OSC 52) instead of shelling out to pbcopy/xclip.
-- [ ] Persist per-connection state: last database, query history scoped per connection.
+- [x] Persist per-connection state: last database, query history scoped per connection.
 
 ## P3 - Project maturity
 
 - [x] CI: fmt + clippy + test on every push (GitLab CI or GitHub Actions).
 - [x] Integration tests against real MySQL (docker-compose or testcontainers) - the DB
       layer currently has zero live-path coverage.
-- [ ] Release pipeline: tagged releases with prebuilt binaries (cargo-dist),
-      publish to crates.io / Homebrew tap.
+- [x] Release pipeline: tagged releases with prebuilt binaries (cargo-dist),
+      publish to crates.io (Homebrew tap still pending).
 - [x] rustfmt.toml + clippy lints committed; deny.toml for dependency audit.
 - [x] Structured logging behind a `--log-file` flag (helps debug terminal-mangling bugs
       that are invisible in a TUI).
@@ -159,9 +159,7 @@ Candidates from the original ROADMAP.md not yet re-prioritized into a tier above
       run. Needs a `set_autocommit` method on `Database`.
 - [ ] Row counts in schema browser - annotate each table with an estimated row count
       (`SHOW TABLE STATUS` / `pg_class.reltuples` / `sqlite_stat1`).
-- [ ] SSH tunneling - connect to DBs behind a bastion. Adds a dep (`russh` or shell out
-      to `ssh -L`) and connection lifecycle complexity. High value for remote DBs;
-      basically a second product.
+- [x] SSH tunneling - connect to DBs behind a bastion. Uses system `ssh -L`, no extra deps.
 
 ## Deliberately out of scope for now
 

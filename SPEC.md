@@ -13,6 +13,7 @@
 | MySQL backend | Stable, tested | 416 |
 | PostgreSQL backend | Stable, tested (5 live tests) | 545 |
 | SQLite backend | Stable, tested | 319 |
+| MSSQL backend | Stable, tested | ~225 |
 | Multi-pane TUI (ratatui) | Fully functional | ~2,900 |
 | Connection manager (save/load/edit/delete) | Complete | — |
 | SQL editor (multi-line, syntax-highlighted) | Complete | 132 |
@@ -37,6 +38,12 @@
 | Background job model (threads + mpsc) | Complete | 76 |
 | View-aware keybindings with shortcut bar | Complete | 1,664 |
 | Debug logging (`--log-file`) | Complete | 111 |
+| SSL/TLS (MySQL, PostgreSQL) | Complete | — |
+| OS keychain integration | Complete | — |
+| SSH tunneling (system `ssh`) | Complete | 86 |
+| Per-connection query timeout | Complete | — |
+| Session persistence (history, last-conn restore) | Complete | — |
+| Release pipeline (cargo-dist, binaries) | Complete | — |
 | CI (fmt + clippy + test) | Complete | — |
 | Tests | ~97 (24 integration) | 653+ |
 | clippy `deny`-all lints | Complete | — |
@@ -46,17 +53,12 @@
 
 ### What's half-done
 
-- **SSL/TLS**: No backend has it. MySQL crate supports it via `mysql_config`; postgres needs `SslMode` and a `tls`-feature-gated dependency; SQLite doesn't need it.
-- **Keychain integration**: Env-var references exist but OS keychain (macOS Keychain, Linux secret-service/libsecret) is missing. Passwords are still plaintext in the config file.
-- **SSH tunneling**: Not supported. Blocks use for remote/cloud databases behind bastions.
-- **Query timeout**: MySQL uses pool-level `read_timeout` (not per-query). Postgres uses server-side `statement_timeout`. SQLite uses `busy_timeout`.
-- **Oracle / MSSQL**: No backends exist. Enterprise shops need them.
-- **Release pipeline**: No `cargo-dist`, no Homebrew tap, no prebuilt binaries, not on crates.io.
-- **Session persistence**: Query history is in-memory only. No per-connection state restoration.
+- **Oracle**: No backend exists. Enterprise shops that use Oracle are still out of luck.
+- **Multi-schema browsing (PostgreSQL)**: Schema browser only shows `current_schema()` — tables in other search_path schemas don't appear.
 
 ### What's consciously deferred (ponytail markers)
 
-Single-thread job model, single `Client` behind Mutex (postgres), naive row-delete WHERE (not PK-based), EXPLAIN on first statement only, one schema at a time (postgres), SQLite no cancellation, file-path-only SQLite, `--help`/`--version` (hand-rolled CLI arg), multiple connections/tabs, ER diagrams, query builder, theming, keybinding customization.
+Single-thread job model, single `Client` behind Mutex (postgres), naive row-delete WHERE (not PK-based), EXPLAIN on first statement only, one schema at a time (postgres), SQLite no cancellation, file-path-only SQLite, multiple connections/tabs, ER diagrams, query builder, theming, keybinding customization, Homebrew tap, telemetry, docs site, Oracle backend, saved queries, multi-tab.
 
 ---
 
@@ -97,30 +99,30 @@ All are Java (DataGrip, DBeaver) or Electron (Beekeeper, TablePlus). All provide
 
 | Capability | TablePlus | DataGrip | DBeaver | lazydb v0.2 |
 |------------|-----------|----------|---------|-------------|
-| Multi-DB | ~20 | 30+ | 100+ | 3 |
-| SSH tunnel | Yes | Yes | Yes | **No** |
-| SSL/TLS | Yes | Yes | Yes | **No** |
-| Keychain | macOS | Built-in | Master pass | **Plaintext** |
+| Multi-DB | ~20 | 30+ | 100+ | 4 |
+| SSH tunnel | Yes | Yes | Yes | Yes |
+| SSL/TLS | Yes | Yes | Yes | Yes |
+| Keychain | macOS | Built-in | Master pass | Yes (optional) |
 | Tabbed editors | Yes | Yes | Yes | **Single** |
 | Schema tree | Yes | Yes | Yes | Yes |
 | Cell editing | Staged | Inline | Inline | Inline |
 | Export (any format) | Yes | Yes | Yes | CSV/JSON |
-| Query history | Session + saved | Persistent | Persistent | In-memory |
+| Query history | Session + saved | Persistent | Persistent | Persistent |
 | Autocomplete | Yes | Deep | Yes | Basic |
 | DDL tools | No | Migration gen | ER diagram | **No** |
 | Dark mode | Native | Theme | Theme | Yes |
-| Binary distribution | DMG | JAR | Installer | **cargo only** |
+| Binary distribution | DMG | JAR | Installer | Prebuilt binaries |
 | Premium pricing | $89 | $99/yr | Free | FOSS |
 
-**The gap is wide — but narrow for a TUI.** A terminal tool does not need to match DataGrip's SQL intelligence. It needs:
+**The gap is narrow — and narrowing.** A terminal tool does not need to match DataGrip's SQL intelligence. It needs:
 
-1. **Connect securely** (SSL + SSH + keychain) to any database
+1. **Connect securely** (SSL + SSH + keychain) to any database ✅
 2. **Browse schema** quickly (tree view, filter, search)
 3. **Query and see results** (editor + grid, fast export)
 4. **Edit data** (inline cell editing, insert, delete)
 5. **Stay out of the way** (instant startup, zero-config, keyboard-first)
 
-No TUI tool satisfies all five today. That's the target.
+lazydb satisfies all five for MySQL/PG/SQLite/MSSQL. The remaining gaps are Oracle, saved queries, and multi-tab.
 
 ---
 
@@ -128,30 +130,26 @@ No TUI tool satisfies all five today. That's the target.
 
 Organized into phases. Each phase ends with "a professional could use this at work without apologizing for it."
 
-### Phase 1 — Secure connectivity (trust barrier)
+### Phase 1 — Secure connectivity (trust barrier) ✅
 
-**Without this, you can't connect to production or corporate databases.** Currently the #1 blocker.
+**Done.** You can connect to a production RDS/CloudSQL instance over SSL without storing a password in plaintext, even through a bastion.
 
-| Item | Effort | Why |
-|------|--------|-----|
-| SSL/TLS for PostgreSQL | Low (feature-gate `postgres-native-tls` or `openssl`) | Cloud PG requires it (~60% of PG installs) |
-| SSL/TLS for MySQL | Low (`mysql_config` already supports it) | Cloud MySQL/RDS require it |
-| OS keychain integration | Medium (keyring crate, fallback to env vars) | Plaintext passwords are a dealbreaker in any org |
-| SSH tunnel | High (sidecar SSH process or `russh` crate) | Required for bastion-host architectures |
-| Connect timeout per-connection | Low (config field, passed to backend open) | Current hardcoded 10s is wrong if you know your network |
-
-**Gate**: After this phase, you can connect to a production RDS/CloudSQL instance over SSL without storing a password in plaintext, even through a bastion.
+| Item | Status |
+|------|--------|
+| SSL/TLS for PostgreSQL | ✅ Feature-gated `postgres-native-tls` |
+| SSL/TLS for MySQL | ✅ Built-in via `mysql_config` |
+| OS keychain integration | ✅ `keyring` crate, feature-gated |
+| SSH tunnel | ✅ Sidecar `ssh -L` process |
+| Per-connection query timeout | ✅ Config field, per-backend |
 
 ### Phase 2 — Enterprise backends
 
-**Without this, you can't work at a company that uses Oracle or SQL Server (~40% of enterprises).**
+| Item | Status |
+|------|--------|
+| MSSQL backend | ✅ `tiberius` crate, TDS protocol, feature-gated |
+| Oracle backend | ❌ No good Rust crate — `sibyl` or OCI-based, high effort |
 
-| Item | Effort | Why |
-|------|--------|-----|
-| MSSQL backend | Medium (tiberius crate, TDS protocol) | Heavy in .NET shops, financial services |
-| Oracle backend | High (no good Rust crate — sibyl or OCI-based) | Heavy in banking, healthcare, legacy |
-
-**Gate**: After this phase, you can use lazydb at any company regardless of DB vendor.
+**Gate (partial)**: MSSQL works. Oracle remains the last missing enterprise backend.
 
 ### Phase 3 — Result-set performance at scale
 
@@ -168,16 +166,14 @@ Organized into phases. Each phase ends with "a professional could use this at wo
 
 ### Phase 4 — Session persistence & tabs
 
-**Without this, every session starts from scratch. Professionals expect continuity.**
+| Item | Status |
+|------|--------|
+| Persistent query history (per-connection) | ✅ Appended to config file, max 100 entries |
+| Session restore (last DB, etc.) | ✅ `last_connection` saved on quit, restored on launch |
+| Saved queries / snippets | ❌ Not yet — TOML file + picker UI pending |
+| Multi-tab / multiple queries at once | ❌ State refactor, high effort |
 
-| Item | Effort | Why |
-|------|--------|-----|
-| Persistent query history (per-connection) | Medium (append to history file) | Current in-memory history is lost on quit |
-| Session restore (last DB, open schema, etc.) | Low (save to config file on quit) | Small UX win, big perception shift |
-| Saved queries / snippets | Low (TOML file, picker UI) | The 5 queries everyone runs daily |
-| Multi-tab / multiple queries at once | High (state refactor, concurrent query model) | Biggest lift; single editor limits workflow |
-
-**Gate**: After this phase, opening lazydb feels like resuming where you left off.
+**Gate (partial)**: Opening lazydb restores your last connection and query history. Saved snippets and tabs are still deferred.
 
 ### Phase 5 — Export & data movement
 
@@ -208,20 +204,18 @@ Organized into phases. Each phase ends with "a professional could use this at wo
 
 ### Phase 7 — Project maturity
 
-**Without releases, packaging, and community signals, professionals won't adopt.**
+| Item | Status |
+|------|--------|
+| `cargo-dist` release pipeline | ✅ Prebuilt binaries for macOS/Linux/Windows |
+| crates.io publish | ✅ `cargo install lazydb` |
+| `--help` + `--version` | ✅ Hand-rolled CLI args |
+| Semantic versioning + changelog | ✅ CHANGELOG.md + 0.2.0 tag |
+| Homebrew tap / winget / scoop | ❌ Not yet |
+| Telemetry opt-in | ❌ Deferred |
+| Security audit of dependencies | ❌ Deferred |
+| Website / docs site | ❌ Deferred |
 
-| Item | Effort | Why |
-|------|--------|-----|
-| `cargo-dist` release pipeline | Low | Prebuilt binaries for macOS/Linux/Windows |
-| Homebrew tap / winget / scoop | Low | Devs want `brew install lazydb` |
-| crates.io publish | Low | `cargo install lazydb` |
-| `--help` + `--version` | Low | CLI basics |
-| Semantic versioning + changelog | Low | Required for enterprise adoption |
-| Telemetry opt-in (helpful defaults) | Low | The author needs to know what features are used |
-| Security audit of dependencies | One-time | `cargo audit`, supply-chain confidence |
-| Website / docs site | Low | Single page with keybindings, screenshots, install instructions |
-
-**Gate**: After this phase, `brew install lazydb && lazydb` works on a fresh machine.
+**Gate (partial)**: `cargo install lazydb` and prebuilt binaries work. Homebrew and docs site are still pending.
 
 ### Phase 8 — Power-user features
 
@@ -319,18 +313,18 @@ Critical missing test: **no end-to-end test** that starts the TUI, simulates key
 
 ## 7. Summary: what "professional" means by phase
 
-| Phase | Professional can… |
-|-------|-------------------|
-| 1 | Connect to a production RDS/CloudSQL instance over SSL through a bastion |
-| 2 | Use Oracle or SQL Server at their company |
-| 3 | Browse 1M-row tables without freezing |
-| 4 | Resume a session, run a saved query, open multiple tabs |
-| 5 | Export data as CSV/XLSX/INSERT for a colleague |
-| 6 | Roll back a mistaken UPDATE with one keystroke |
-| 7 | `brew install lazydb` on a company laptop with security team approval |
-| 8 | Prefer lazydb over their previous tool |
+| Phase | Professional can… | Status |
+|-------|-------------------|--------|
+| 1 | Connect to a production RDS/CloudSQL instance over SSL through a bastion | ✅ Done |
+| 2 | Use Oracle or SQL Server at their company | 🟡 MSSQL done, Oracle pending |
+| 3 | Browse 1M-row tables without freezing | ❌ Not started |
+| 4 | Resume a session, run a saved query, open multiple tabs | 🟡 History + restore done, snippets + tabs pending |
+| 5 | Export data as CSV/XLSX/INSERT for a colleague | 🟡 CSV/JSON done, XLSX/INSERT pending |
+| 6 | Roll back a mistaken UPDATE with one keystroke | ❌ Not started |
+| 7 | `brew install lazydb` on a company laptop with security team approval | 🟡 cargo-install + binaries done, Homebrew pending |
+| 8 | Prefer lazydb over their previous tool | ❌ Phase 3-6 items block this |
 
-**Priority for v1 "professional enough"**: Phases 1 + 7 (connect securely + install easily) give the highest perception value per effort. Phases 2-6 are feature depth that can follow.
+**Next priority**: Phase 3 (result-set performance at scale) — the biggest remaining UX gap.
 
 ---
 

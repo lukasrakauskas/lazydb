@@ -37,6 +37,7 @@ available on the [Releases](https://github.com/lukasrakauskas/lazydb/releases) p
 - SSH tunneling via system `ssh` command (no extra deps)
 - Per-connection query timeout
 - MSSQL backend
+- Session persistence (query history + last-connection restore)
 
 ## Run
 
@@ -81,10 +82,9 @@ Queries run on a background thread so the UI stays responsive.
 
 ## Known limitations (ponytail: deliberate minimal scope)
 
-- SQL is split on `;` naively — `;` inside string literals/comments will mis-split.
-- Only the first result set's columns are displayed; later sets in a multi-statement
-  run contribute only their `rows_affected`.
-- Connection passwords are stored in plaintext in the config file.
 - PostgreSQL uses the text protocol (`simple_query`), which materializes the whole result
   set before the row-limit guard truncates (MySQL streams and stops early); a very large
   SELECT still downloads fully. Upgrade path: binary-protocol streaming.
+- No Oracle backend.
+- No saved queries / snippets.
+- Single editor (no tabs / split panes).
