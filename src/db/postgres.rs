@@ -1,9 +1,9 @@
 use anyhow::Result;
+#[cfg(feature = "ssl")]
+use native_tls::TlsConnector as NativeTlsConnector;
 use postgres::Client;
 #[cfg(feature = "ssl")]
 use postgres_native_tls::MakeTlsConnector;
-#[cfg(feature = "ssl")]
-use native_tls::TlsConnector as NativeTlsConnector;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -71,9 +71,7 @@ impl PgCfg {
         if self.ssl {
             #[cfg(feature = "ssl")]
             {
-                let connector = MakeTlsConnector::new(
-                    NativeTlsConnector::builder().build()?,
-                );
+                let connector = MakeTlsConnector::new(NativeTlsConnector::builder().build()?);
                 c.connect(connector).map_err(pg_err)
             }
             #[cfg(not(feature = "ssl"))]

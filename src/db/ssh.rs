@@ -58,10 +58,13 @@ impl SshTunnel {
         tuned.host = "127.0.0.1".into();
         tuned.port = local_port;
 
-        Ok((tuned, Self {
-            child: Some(child),
-            local_port,
-        }))
+        Ok((
+            tuned,
+            Self {
+                child: Some(child),
+                local_port,
+            },
+        ))
     }
 }
 
