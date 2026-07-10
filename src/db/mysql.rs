@@ -323,6 +323,7 @@ mod live {
             password: pass.to_string(),
             database: db.to_string(),
             ssl: false,
+            use_keychain: false,
         })
     }
 

@@ -274,7 +274,8 @@ impl App {
             .unwrap_or(FormState::default_port(&kind));
         let edit_index = form.edit_index;
         let fields = form.fields.clone();
-        let conn = Connection {
+        let use_keychain = false; // ponytail: no UI toggle yet; user sets in TOML.
+        let mut conn = Connection {
             name: fields[0].clone(),
             kind,
             host: fields[1].clone(),
@@ -283,7 +284,16 @@ impl App {
             password: fields[4].clone(),
             database: fields[5].clone(),
             ssl: false,
+            use_keychain,
         };
+        if conn.use_keychain && !conn.password.is_empty() {
+            #[cfg(feature = "keychain")]
+            if let Err(e) = crate::db::keychain_store(&conn.name, &conn.password) {
+                self.status = format!("Keychain store failed: {e}");
+                return;
+            }
+            conn.password = String::new();
+        }
         if let Some(i) = edit_index.filter(|i| *i < self.config.connections.len()) {
             self.config.connections[i] = conn;
             self.conn_cursor = i;
@@ -1386,6 +1396,7 @@ impl App {
             password: fields[4].clone(),
             database: fields[5].clone(),
             ssl: false,
+            use_keychain: false,
         };
         // ponytail: reuse the Ping job — open + SELECT 1. Best-effort: a fresh
         // pool is built just to test; cheap for a one-shot TUI ping.
