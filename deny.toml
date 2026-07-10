@@ -16,6 +16,13 @@ ignore = [
     "RUSTSEC-2026-0104",
 ]
 
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0103",
+    "RUSTSEC-2026-0104",
+]
+unmaintained = "allow"
+
 [licenses]
 # The `mysql` crate pulls transitive deps (e.g. webpki-roots) that are
 # MPL-2.0, so it must be allowed alongside the usual permissive set.
@@ -32,3 +39,7 @@ allow = [
     "MPL-2.0",
     "BSL-1.0",
 ]
+<<<<<<< HEAD
+=======
+
+>>>>>>> 0083ee8 (Fix deny: allow unmaintained crates)
