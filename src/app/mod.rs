@@ -21,7 +21,9 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::autocomplete;
 use crate::config::{Config, Features};
-use crate::db::{self, CancelSlot, Connection, Database, ExecCtx, StatementResult, ssh::SshTunnel};
+use crate::db::{
+    self, CancelSlot, Connection, Database, ExecCtx, StatementResult, TriggerInfo, ssh::SshTunnel,
+};
 use crate::editor::Editor;
 use crate::filter::CellMatches;
 use crate::shortcuts::{self, Action, View};
@@ -64,6 +66,8 @@ pub struct App {
     pub autocomplete: Option<Autocomplete>,
     pub schema: HashMap<String, Vec<String>>,
     pub schema_views: Vec<String>,
+    pub schema_procedures: Vec<String>,
+    pub schema_triggers: Vec<TriggerInfo>,
     pub schema_filter: Option<String>,
     pub schema_filter_input_open: bool,
     pub schema_cursor: usize,
@@ -147,6 +151,8 @@ impl App {
             autocomplete: None,
             schema: HashMap::new(),
             schema_views: Vec::new(),
+            schema_procedures: Vec::new(),
+            schema_triggers: Vec::new(),
             schema_filter: None,
             schema_filter_input_open: false,
             schema_cursor: 0,
@@ -452,14 +458,36 @@ impl App {
             },
             JobResult::Views(r) => match r {
                 Ok(views) => {
-                    let n = self.schema.len();
                     self.schema_views = views;
-                    self.status = format!(
-                        "Schema loaded: {n} tables, {} views.",
-                        self.schema_views.len()
-                    );
+                    if let Some(db) = self.db.as_ref() {
+                        self.running_query = true;
+                        self.rx = Some(spawn_job(Job::Procedures(db.boxed_clone())));
+                    }
                 }
                 Err(e) => self.status = format!("Views load failed: {e}"),
+            },
+            JobResult::Procedures(r) => match r {
+                Ok(procs) => {
+                    self.schema_procedures = procs;
+                    if let Some(db) = self.db.as_ref() {
+                        self.running_query = true;
+                        self.rx = Some(spawn_job(Job::Triggers(db.boxed_clone())));
+                    }
+                }
+                Err(e) => self.status = format!("Procedures load failed: {e}"),
+            },
+            JobResult::Triggers(r) => match r {
+                Ok(triggers) => {
+                    let v = self.schema_views.len();
+                    let p = self.schema_procedures.len();
+                    self.schema_triggers = triggers;
+                    let t = self.schema_triggers.len();
+                    self.status = format!(
+                        "Schema loaded: {} tables, {v} views, {p} procedures, {t} triggers.",
+                        self.schema.len()
+                    );
+                }
+                Err(e) => self.status = format!("Triggers load failed: {e}"),
             },
             JobResult::PrimaryKeys(r) => match r {
                 Ok(pk_cols) => {
@@ -1163,6 +1191,41 @@ impl App {
                 self.focus = Focus::Results;
                 self.run_query();
             }
+            Some(SchemaEntry::Procedure(p)) => {
+                let esc = sql_escape(&p);
+                let sql = match kind {
+                    "mysql" => format!("SHOW CREATE PROCEDURE `{esc}`"),
+                    "postgres" => format!("SELECT prosrc FROM pg_proc WHERE proname = '{esc}'"),
+                    "mssql" => format!("SELECT OBJECT_DEFINITION(OBJECT_ID('{esc}'))"),
+                    _ => return,
+                };
+                self.editor = Editor::from_text(sql);
+                self.focus = Focus::Results;
+                self.run_query();
+            }
+            Some(SchemaEntry::Trigger { name, on }) => {
+                let esc_name = sql_escape(&name);
+                let sql = match kind {
+                    "mysql" => format!("SHOW CREATE TRIGGER `{esc_name}`"),
+                    "postgres" => format!(
+                        "SELECT tgname, relname AS table, pg_get_triggerdef(oid) AS definition \
+                         FROM pg_trigger t JOIN pg_class c ON t.tgrelid = c.oid \
+                         JOIN pg_namespace n ON c.relnamespace = n.oid \
+                         WHERE t.tgname = '{esc_name}' AND c.relname = '{on}' \
+                         AND n.nspname = current_schema() AND NOT t.tgisinternal"
+                    ),
+                    "mssql" => {
+                        format!("SELECT OBJECT_DEFINITION(OBJECT_ID('{esc_name}')) AS definition")
+                    }
+                    "sqlite" => format!(
+                        "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = '{esc_name}'"
+                    ),
+                    _ => return,
+                };
+                self.editor = Editor::from_text(sql);
+                self.focus = Focus::Results;
+                self.run_query();
+            }
             Some(SchemaEntry::Leaf { table, opt }) => {
                 let sql = schema_query(&table, opt, kind);
                 self.editor = Editor::from_text(sql);
@@ -1728,6 +1791,19 @@ impl App {
                 rows.push(SchemaEntry::View(v.clone()));
             }
         }
+        for p in &self.schema_procedures {
+            if matches_filter(p) {
+                rows.push(SchemaEntry::Procedure(p.clone()));
+            }
+        }
+        for t in &self.schema_triggers {
+            if matches_filter(&t.name) {
+                rows.push(SchemaEntry::Trigger {
+                    name: t.name.clone(),
+                    on: t.table.clone(),
+                });
+            }
+        }
         rows
     }
 
@@ -1740,6 +1816,8 @@ impl App {
             Some(SchemaEntry::Table(t)) => Some(t),
             Some(SchemaEntry::View(v)) => Some(v),
             Some(SchemaEntry::Leaf { table, .. }) => Some(table),
+            Some(SchemaEntry::Procedure(p)) => Some(p),
+            Some(SchemaEntry::Trigger { name, .. }) => Some(name),
             None => None,
         }
     }

@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 
-use crate::db::{Database, ExecCtx, ExecutionResult};
+use crate::db::{Database, ExecCtx, ExecutionResult, TriggerInfo};
 
 pub enum Job {
     Ping(Box<dyn Database>, String),
     Query(Box<dyn Database>, String, ExecCtx),
     Schema(Box<dyn Database>),
     Views(Box<dyn Database>),
+    Procedures(Box<dyn Database>),
+    Triggers(Box<dyn Database>),
     PrimaryKeys(Box<dyn Database>, String),
     UpdateCell(Box<dyn Database>, String, ExecCtx),
 }
@@ -17,6 +19,8 @@ pub enum JobResult {
     Query(Result<ExecutionResult, String>),
     Schema(Result<HashMap<String, Vec<String>>, String>),
     Views(Result<Vec<String>, String>),
+    Procedures(Result<Vec<String>, String>),
+    Triggers(Result<Vec<TriggerInfo>, String>),
     PrimaryKeys(Result<Vec<String>, String>),
     UpdateCell(Result<ExecutionResult, String>),
 }
@@ -54,6 +58,14 @@ pub fn spawn_job(job: Job) -> Receiver<JobResult> {
             Job::Views(db) => match db.views() {
                 Ok(v) => JobResult::Views(Ok(v)),
                 Err(e) => JobResult::Views(Err(e.to_string())),
+            },
+            Job::Procedures(db) => match db.procedures() {
+                Ok(p) => JobResult::Procedures(Ok(p)),
+                Err(e) => JobResult::Procedures(Err(e.to_string())),
+            },
+            Job::Triggers(db) => match db.triggers() {
+                Ok(t) => JobResult::Triggers(Ok(t)),
+                Err(e) => JobResult::Triggers(Err(e.to_string())),
             },
             Job::PrimaryKeys(db, table) => match db.primary_keys(&table) {
                 Ok(pks) => JobResult::PrimaryKeys(Ok(pks)),

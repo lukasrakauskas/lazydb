@@ -3,7 +3,7 @@ use mysql::{OptsBuilder, Pool, SslOpts, Value, prelude::*};
 use std::collections::HashMap;
 use std::time::Duration;
 
-use super::{Connection, Database, ExecCtx, ExecutionResult, StatementResult};
+use super::{Connection, Database, ExecCtx, ExecutionResult, StatementResult, TriggerInfo};
 
 pub struct Mysql {
     pool: Pool,
@@ -60,6 +60,28 @@ impl Database for Mysql {
             "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'VIEW' ORDER BY TABLE_NAME",
         )?;
         Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    fn procedures(&self) -> Result<Vec<String>> {
+        let mut conn = self.pool.get_conn()?;
+        let rows: Vec<(String,)> = conn.query(
+            "SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA = DATABASE() AND ROUTINE_TYPE = 'PROCEDURE' ORDER BY ROUTINE_NAME",
+        )?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    fn triggers(&self) -> Result<Vec<TriggerInfo>> {
+        let mut conn = self.pool.get_conn()?;
+        let rows: Vec<(String, String)> = conn.query(
+            "SELECT TRIGGER_NAME, EVENT_OBJECT_TABLE FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() ORDER BY TRIGGER_NAME",
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|r| TriggerInfo {
+                name: r.0,
+                table: r.1,
+            })
+            .collect())
     }
 
     fn execute_script(&self, sql: &str, ctx: &ExecCtx) -> Result<ExecutionResult> {

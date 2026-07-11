@@ -55,6 +55,12 @@ fn default_ssh_port() -> u16 {
     22
 }
 
+#[derive(Clone)]
+pub struct TriggerInfo {
+    pub name: String,
+    pub table: String,
+}
+
 pub struct ExecutionResult {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<String>>,
@@ -127,6 +133,12 @@ pub trait Database: Send + 'static {
     /// appear (rare). upgrade: a separate TABLES query if you need empty tables.
     fn schema(&self) -> Result<HashMap<String, Vec<String>>>;
     fn views(&self) -> Result<Vec<String>>;
+    fn procedures(&self) -> Result<Vec<String>> {
+        Ok(vec![])
+    }
+    fn triggers(&self) -> Result<Vec<TriggerInfo>> {
+        Ok(vec![])
+    }
     fn primary_keys(&self, table: &str) -> Result<Vec<String>>;
     fn kill_query(&self, conn_id: u32) -> Result<()>;
     fn boxed_clone(&self) -> Box<dyn Database>;

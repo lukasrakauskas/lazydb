@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::{Connection as DbConn, Database, ExecCtx, ExecutionResult, StatementResult};
+use super::{
+    Connection as DbConn, Database, ExecCtx, ExecutionResult, StatementResult, TriggerInfo,
+};
 
 pub struct Sqlite {
     conn: Connection,
@@ -56,6 +58,23 @@ impl Database for Sqlite {
             views.push(row?);
         }
         Ok(views)
+    }
+
+    fn triggers(&self) -> Result<Vec<TriggerInfo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, tbl_name FROM sqlite_master WHERE type = 'trigger' ORDER BY name",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(TriggerInfo {
+                name: r.get(0)?,
+                table: r.get(1)?,
+            })
+        })?;
+        let mut triggers = Vec::new();
+        for row in rows {
+            triggers.push(row?);
+        }
+        Ok(triggers)
     }
 
     fn schema(&self) -> Result<HashMap<String, Vec<String>>> {
