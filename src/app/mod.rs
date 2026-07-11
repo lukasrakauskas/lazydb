@@ -4,6 +4,7 @@ mod util;
 
 pub use job::{Job, JobResult, spawn_job};
 pub use types::*;
+pub(crate) use util::split_pg_table_name;
 pub use util::*;
 
 use std::collections::{HashMap, HashSet};

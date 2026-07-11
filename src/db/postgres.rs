@@ -116,47 +116,57 @@ impl Database for Postgres {
     }
 
     fn views(&self) -> Result<Vec<String>> {
-        const SQL: &str = "SELECT table_name FROM information_schema.views WHERE table_schema = current_schema() ORDER BY table_name";
+        const SQL: &str = "SELECT table_schema, table_name \
+             FROM information_schema.views \
+             WHERE table_schema = ANY(current_schemas(false)) \
+               AND table_schema NOT LIKE 'pg_%' \
+               AND table_schema <> 'information_schema' \
+             ORDER BY table_schema, table_name";
         let msgs = self
             .client
             .lock()
             .unwrap()
             .simple_query(SQL)
             .map_err(pg_err)?;
-        let mut views = Vec::new();
+        let mut schema_map: HashMap<String, Vec<String>> = HashMap::new();
         for m in &msgs {
             if let postgres::SimpleQueryMessage::Row(r) = m
-                && let Some(v) = r.get(0)
+                && let (Some(s), Some(v)) = (r.get(0), r.get(1))
             {
-                views.push(v.to_string());
+                schema_map
+                    .entry(s.to_string())
+                    .or_default()
+                    .push(v.to_string());
             }
         }
-        Ok(views)
+        Ok(flatten_names(schema_map))
     }
 
     fn schema(&self) -> Result<HashMap<String, Vec<String>>> {
-        // ponytail: current_schema() only — tables in other search_path schemas
-        // won't appear. Covers the common case (tables in `public`). upgrade:
-        // scan all current_schemas(false) minus the system ones.
-        const SQL: &str = "SELECT table_name, column_name \
+        const SQL: &str = "SELECT table_schema, table_name, column_name \
              FROM information_schema.columns \
-             WHERE table_schema = current_schema() \
-             ORDER BY table_name, ordinal_position";
+             WHERE table_schema = ANY(current_schemas(false)) \
+               AND table_schema NOT LIKE 'pg_%' \
+               AND table_schema <> 'information_schema' \
+             ORDER BY table_schema, table_name, ordinal_position";
         let msgs = self
             .client
             .lock()
             .unwrap()
             .simple_query(SQL)
             .map_err(pg_err)?;
-        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut schema_map: HashMap<String, Vec<(String, String)>> = HashMap::new();
         for m in &msgs {
             if let postgres::SimpleQueryMessage::Row(r) = m
-                && let (Some(t), Some(c)) = (r.get(0), r.get(1))
+                && let (Some(s), Some(t), Some(c)) = (r.get(0), r.get(1), r.get(2))
             {
-                map.entry(t.to_string()).or_default().push(c.to_string());
+                schema_map
+                    .entry(s.to_string())
+                    .or_default()
+                    .push((t.to_string(), c.to_string()));
             }
         }
-        Ok(map)
+        Ok(flatten_schema(schema_map))
     }
 
     fn execute_script(&self, sql: &str, ctx: &ExecCtx) -> Result<ExecutionResult> {
@@ -237,25 +247,26 @@ impl Database for Postgres {
     }
 
     fn primary_keys(&self, table: &str) -> Result<Vec<String>> {
-        // ponytail: parameterized on table_name (no regclass cast) so there's
-        // no injection and no search_path resolution edge cases for mixed-case
-        // / reserved-word names. Filters current_schema(); PK column order via
-        // ordinal_position. upgrade: pass an explicit schema if multi-schema.
+        let (schema, name) = split_table_name(table);
+        let schema_param: Option<&str> = if schema.is_empty() {
+            None
+        } else {
+            Some(schema)
+        };
         const SQL: &str = "SELECT k.column_name \
              FROM information_schema.table_constraints tc \
              JOIN information_schema.key_column_usage k \
                ON k.constraint_name = tc.constraint_name \
               AND k.table_schema = tc.table_schema \
              WHERE tc.constraint_type = 'PRIMARY KEY' \
-               AND tc.table_schema = current_schema() \
+               AND tc.table_schema = COALESCE($2, current_schema()) \
                AND k.table_name = $1 \
              ORDER BY k.ordinal_position";
-        let table = table.to_string();
         let rows = self
             .client
             .lock()
             .unwrap()
-            .query(SQL, &[&table])
+            .query(SQL, &[&name, &schema_param])
             .map_err(pg_err)?;
         Ok(rows.into_iter().map(|r| r.get::<_, String>(0)).collect())
     }
@@ -317,6 +328,62 @@ fn pid_of(msgs: &[postgres::SimpleQueryMessage]) -> Option<u32> {
         }
     }
     None
+}
+
+/// Split a schema-qualified table name into (schema, table). If there's no
+/// dot, schema is empty and the caller should fall back to current_schema().
+fn split_table_name(name: &str) -> (&str, &str) {
+    let (s, n) = crate::app::split_pg_table_name(name);
+    (s.unwrap_or(""), n)
+}
+
+/// Flatten a map of schema→items into a Vec of display names. When only one
+/// schema has entries, use bare names (backward compat). When multiple schemas
+/// have entries, prefix with `schema.` so users can distinguish them.
+fn flatten_names(mut schema_map: HashMap<String, Vec<String>>) -> Vec<String> {
+    if schema_map.len() <= 1 {
+        let mut out: Vec<String> = schema_map.into_values().flatten().collect();
+        out.sort();
+        return out;
+    }
+    let mut out = Vec::new();
+    // ponytail: iterate in deterministic schema order, sort names per schema
+    let mut schemas: Vec<String> = schema_map.keys().cloned().collect();
+    schemas.sort();
+    for schema in schemas {
+        let mut names = schema_map.remove(&schema).unwrap();
+        names.sort();
+        for n in names {
+            out.push(format!("{schema}.{n}"));
+        }
+    }
+    out
+}
+
+/// Flatten a map of schema→[(table, column)] entries into the schema map
+/// format expected by the Database trait. Prefixes with schema when multiple
+/// schemas are present.
+fn flatten_schema(
+    schema_map: HashMap<String, Vec<(String, String)>>,
+) -> HashMap<String, Vec<String>> {
+    if schema_map.len() <= 1 {
+        let mut map = HashMap::new();
+        for (_, entries) in schema_map {
+            for (t, c) in entries {
+                map.entry(t).or_insert(Vec::new()).push(c);
+            }
+        }
+        return map;
+    }
+    let mut map = HashMap::new();
+    for (schema, entries) in schema_map {
+        for (t, c) in entries {
+            map.entry(format!("{schema}.{t}"))
+                .or_insert(Vec::new())
+                .push(c);
+        }
+    }
+    map
 }
 
 #[cfg(test)]

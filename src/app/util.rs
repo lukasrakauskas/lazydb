@@ -94,26 +94,43 @@ fn strip_comments_and_strings(sql: &str) -> String {
 /// stored (lowercased-if-unquoted) form, so quoting round-trips.
 pub fn schema_query(table: &str, opt: SchemaOpt, kind: &str) -> String {
     if kind == "postgres" {
-        let t = table.replace('"', "\"\"");
+        let (schema, name) = split_pg_table_name(table);
+        let qname = if let Some(s) = schema {
+            format!("\"{s}\".\"{name}\"")
+        } else {
+            format!("\"{name}\"")
+        };
+        let esc_s = schema.map(|s| s.replace('\'', "''"));
+        let esc_n = name.replace('\'', "''");
+        let schema_cond = if let Some(ref s) = esc_s {
+            format!("table_schema = '{s}'")
+        } else {
+            "table_schema = current_schema()".to_string()
+        };
+        let schema_cond_idx = if let Some(ref s) = esc_s {
+            format!("schemaname = '{s}'")
+        } else {
+            "schemaname = current_schema()".to_string()
+        };
         match opt {
-            SchemaOpt::Rows => format!("SELECT * FROM \"{t}\" LIMIT 100;"),
+            SchemaOpt::Rows => format!("SELECT * FROM {qname} LIMIT 100;"),
             SchemaOpt::Columns => format!(
                 "SELECT column_name, data_type, is_nullable, column_default \
                  FROM information_schema.columns \
-                 WHERE table_schema = current_schema() AND table_name = '{table}' \
+                 WHERE {schema_cond} AND table_name = '{esc_n}' \
                  ORDER BY ordinal_position;"
             ),
             SchemaOpt::Constraints => format!(
                 "SELECT constraint_name, constraint_type \
                  FROM information_schema.table_constraints \
-                 WHERE table_schema = current_schema() AND table_name = '{table}';"
+                 WHERE {schema_cond} AND table_name = '{esc_n}';"
             ),
             // ponytail: postgres has no `SHOW INDEX`; pg_indexes gives the
             // definition string (indexname + indexdef) which renders the same
             // role. upgrade: pg_index for a structured (cols, unique) view.
             SchemaOpt::Indexes => format!(
                 "SELECT indexname, indexdef FROM pg_indexes \
-                 WHERE schemaname = current_schema() AND tablename = '{table}';"
+                 WHERE {schema_cond_idx} AND tablename = '{esc_n}';"
             ),
         }
     } else {
@@ -125,6 +142,16 @@ pub fn schema_query(table: &str, opt: SchemaOpt, kind: &str) -> String {
             ),
             SchemaOpt::Indexes => format!("SHOW INDEX FROM `{table}`;"),
         }
+    }
+}
+
+/// Split a schema-qualified postgres table name into (schema, table). If there's
+/// no schema prefix, schema is None and the caller falls back to current_schema().
+pub(crate) fn split_pg_table_name(name: &str) -> (Option<&str>, &str) {
+    if let Some(dot) = name.rfind('.') {
+        (Some(&name[..dot]), &name[dot + 1..])
+    } else {
+        (None, name)
     }
 }
 
