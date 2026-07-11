@@ -25,6 +25,7 @@ pub(crate) fn draw_shortcuts_bar(f: &mut Frame, app: &App, area: Rect) {
         app.cell_inspect.is_some(),
         app.editor_save_input.is_some(),
         app.schema_filter_input_open,
+        app.snippet_picker.is_some(),
         app.show_help,
     );
     let mut spans: Vec<Span> = vec![Span::raw(" ")];

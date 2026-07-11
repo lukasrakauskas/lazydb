@@ -533,6 +533,71 @@ pub(crate) fn draw_confirm_delete(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(msg).wrap(Wrap { trim: false }), inner);
 }
 
+pub(crate) fn draw_snippet_picker(f: &mut Frame, app: &App, area: Rect) {
+    let Some(picker) = &app.snippet_picker else {
+        return;
+    };
+    let w = 60u16.min(area.width.saturating_sub(4));
+    let h = (app.config.snippets.len() as u16 + 4)
+        .min(area.height.saturating_sub(4))
+        .max(5);
+    let x = (area.width.saturating_sub(w)) / 2;
+    let y = (area.height.saturating_sub(h)) / 2;
+    let pop = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
+    f.render_widget(Clear, pop);
+    f.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(" Snippets ")
+            .border_style(theme::FOCUSED_BORDER),
+        pop,
+    );
+    let inner = Rect {
+        x: x + 1,
+        y: y + 1,
+        width: w.saturating_sub(2),
+        height: h.saturating_sub(2),
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::raw(format!(" {}", picker.query))));
+    lines.push(Line::from(Span::raw("")));
+    for (i, &idx) in picker.filtered.iter().enumerate() {
+        if i + 2 >= inner.height as usize {
+            break;
+        }
+        let snip = &app.config.snippets[idx];
+        let selected = i == picker.cursor;
+        let prefix = if selected { " ▸ " } else { "   " };
+        let style = if selected {
+            theme::SCHEMA_CURSOR
+        } else {
+            Style::default()
+        };
+        let sql_preview: String = snip
+            .sql
+            .chars()
+            .take(
+                inner
+                    .width
+                    .saturating_sub(prefix.len() as u16 + snip.name.len() as u16 + 4)
+                    .max(10) as usize,
+            )
+            .collect();
+        lines.push(Line::from(vec![
+            Span::styled(format!("{prefix}{}", snip.name), style),
+            Span::styled("  ", theme::PLACEHOLDER),
+            Span::styled(sql_preview, theme::PLACEHOLDER),
+        ]));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
 pub(crate) fn draw_help(f: &mut Frame, _app: &App, area: Rect) {
     use crate::shortcuts::{View, bar_bindings};
     let w = 80.min(area.width);
@@ -570,6 +635,7 @@ pub(crate) fn draw_help(f: &mut Frame, _app: &App, area: Rect) {
         View::ConfirmDestructive,
         View::ConfirmDelete,
         View::EditorSave,
+        View::SnippetPicker,
     ];
     let mut lines: Vec<Line> = Vec::new();
     for v in &views {

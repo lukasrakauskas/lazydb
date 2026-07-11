@@ -79,6 +79,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         overlay::draw_save_editor(f, app, f.area());
     }
 
+    if app.snippet_picker.is_some() {
+        overlay::draw_snippet_picker(f, app, f.area());
+    }
+
     if app.show_help {
         overlay::draw_help(f, app, f.area());
     }
