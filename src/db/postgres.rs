@@ -248,28 +248,25 @@ impl Database for Postgres {
 
     fn primary_keys(&self, table: &str) -> Result<Vec<String>> {
         let (schema, name) = split_table_name(table);
-        let schema = if schema.is_empty() {
-            "current_schema()"
+        let schema_param: Option<&str> = if schema.is_empty() {
+            None
         } else {
-            schema
+            Some(schema)
         };
-        let sql = format!(
-            "SELECT k.column_name \
+        const SQL: &str = "SELECT k.column_name \
              FROM information_schema.table_constraints tc \
              JOIN information_schema.key_column_usage k \
                ON k.constraint_name = tc.constraint_name \
               AND k.table_schema = tc.table_schema \
              WHERE tc.constraint_type = 'PRIMARY KEY' \
-               AND tc.table_schema = {schema} \
+               AND tc.table_schema = COALESCE($2, current_schema()) \
                AND k.table_name = $1 \
-             ORDER BY k.ordinal_position"
-        );
-        let name = name.to_string();
+             ORDER BY k.ordinal_position";
         let rows = self
             .client
             .lock()
             .unwrap()
-            .query(&sql, &[&name])
+            .query(SQL, &[&name, &schema_param])
             .map_err(pg_err)?;
         Ok(rows.into_iter().map(|r| r.get::<_, String>(0)).collect())
     }
@@ -335,23 +332,27 @@ fn pid_of(msgs: &[postgres::SimpleQueryMessage]) -> Option<u32> {
 
 /// Split a schema-qualified table name into (schema, table). If there's no
 /// dot, schema is empty and the caller should fall back to current_schema().
-fn split_table_name(name: &str) -> (&str, &str) {
-    if let Some(dot) = name.rfind('.') {
-        (&name[..dot], &name[dot + 1..])
-    } else {
-        ("", name)
-    }
+fn split_table_name<'a>(name: &'a str) -> (&'a str, &'a str) {
+    let (s, n) = crate::app::split_pg_table_name(name);
+    (s.unwrap_or(""), n)
 }
 
 /// Flatten a map of schema→items into a Vec of display names. When only one
 /// schema has entries, use bare names (backward compat). When multiple schemas
 /// have entries, prefix with `schema.` so users can distinguish them.
-fn flatten_names(schema_map: HashMap<String, Vec<String>>) -> Vec<String> {
+fn flatten_names(mut schema_map: HashMap<String, Vec<String>>) -> Vec<String> {
     if schema_map.len() <= 1 {
-        return schema_map.into_values().flatten().collect();
+        let mut out: Vec<String> = schema_map.into_values().flatten().collect();
+        out.sort();
+        return out;
     }
     let mut out = Vec::new();
-    for (schema, names) in schema_map {
+    // ponytail: iterate in deterministic schema order, sort names per schema
+    let mut schemas: Vec<String> = schema_map.keys().cloned().collect();
+    schemas.sort();
+    for schema in schemas {
+        let mut names = schema_map.remove(&schema).unwrap();
+        names.sort();
         for n in names {
             out.push(format!("{schema}.{n}"));
         }
