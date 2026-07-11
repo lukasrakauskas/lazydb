@@ -332,7 +332,7 @@ fn pid_of(msgs: &[postgres::SimpleQueryMessage]) -> Option<u32> {
 
 /// Split a schema-qualified table name into (schema, table). If there's no
 /// dot, schema is empty and the caller should fall back to current_schema().
-fn split_table_name<'a>(name: &'a str) -> (&'a str, &'a str) {
+fn split_table_name(name: &str) -> (&str, &str) {
     let (s, n) = crate::app::split_pg_table_name(name);
     (s.unwrap_or(""), n)
 }
