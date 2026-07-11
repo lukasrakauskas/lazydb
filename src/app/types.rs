@@ -25,6 +25,8 @@ pub enum SchemaOpt {
 pub enum SchemaEntry {
     Table(String),
     View(String),
+    Procedure(String),
+    Trigger { name: String, on: String },
     Leaf { table: String, opt: SchemaOpt },
 }
 

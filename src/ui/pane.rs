@@ -49,12 +49,21 @@ pub(crate) fn draw_connections(f: &mut Frame, app: &App, area: Rect) {
 pub(crate) fn draw_schema(f: &mut Frame, app: &App, area: Rect) {
     let n = app.schema.len();
     let nv = app.schema_views.len();
+    let np = app.schema_procedures.len();
+    let nt = app.schema_triggers.len();
     let filter_suffix = app
         .schema_filter
         .as_ref()
         .map(|q| format!("  ·  filter: '{q}'"))
         .unwrap_or_default();
-    let title = format!("Schema  ·  {n} tables, {nv} views{filter_suffix}");
+    let mut label = format!("Schema  ·  {n} tables, {nv} views");
+    if np > 0 {
+        label.push_str(&format!(", {np} procedures"));
+    }
+    if nt > 0 {
+        label.push_str(&format!(", {nt} triggers"));
+    }
+    let title = format!("{label}{filter_suffix}");
     let b = block(&title, "4", app.focus == Focus::Schema);
     let inner = b.inner(area);
     f.render_widget(b, area);
@@ -86,7 +95,8 @@ pub(crate) fn draw_schema(f: &mut Frame, app: &App, area: Rect) {
     }
     if rows.is_empty() && app.schema_filter.is_some() {
         f.render_widget(
-            Paragraph::new("(no tables or views match)").style(theme::PLACEHOLDER),
+            Paragraph::new("(no tables, views, procedures, or triggers match)")
+                .style(theme::PLACEHOLDER),
             draw_area,
         );
         return;
@@ -112,6 +122,10 @@ pub(crate) fn draw_schema(f: &mut Frame, app: &App, area: Rect) {
                     Line::from(Span::styled(format!(" {mark} {t}"), style))
                 }
                 SchemaEntry::View(v) => Line::from(Span::styled(format!("  ◇ {v}"), style)),
+                SchemaEntry::Procedure(p) => Line::from(Span::styled(format!("  ◆ {p}"), style)),
+                SchemaEntry::Trigger { name, on } => {
+                    Line::from(Span::styled(format!("  ▸ {name}  (on: {on})"), style))
+                }
                 SchemaEntry::Leaf { opt, .. } => {
                     let label = match opt {
                         SchemaOpt::Rows => "rows",

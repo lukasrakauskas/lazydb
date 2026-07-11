@@ -5,7 +5,7 @@ use std::time::Duration;
 use tiberius::Client;
 use tokio::runtime::Builder;
 
-use super::{Connection, Database, ExecCtx, ExecutionResult, StatementResult};
+use super::{Connection, Database, ExecCtx, ExecutionResult, StatementResult, TriggerInfo};
 
 type Stream = tokio_util::compat::Compat<tokio::net::TcpStream>;
 
@@ -110,6 +110,58 @@ impl Database for Mssql {
                 .into_iter()
                 .flatten()
                 .filter_map(|r| r.get::<&str, _>(0).map(String::from))
+                .collect())
+        })
+    }
+
+    fn procedures(&self) -> Result<Vec<String>> {
+        let mut client = self.client.lock().unwrap();
+        self.rt.block_on(async {
+            let rows = client
+                .simple_query(
+                    "SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES \
+                     WHERE ROUTINE_SCHEMA = 'dbo' AND ROUTINE_TYPE = 'PROCEDURE' \
+                     ORDER BY ROUTINE_NAME",
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("mssql: {e}"))?
+                .into_results()
+                .await
+                .map_err(|e| anyhow::anyhow!("mssql: {e}"))?;
+            Ok(rows
+                .into_iter()
+                .flatten()
+                .filter_map(|r| r.get::<&str, _>(0).map(String::from))
+                .collect())
+        })
+    }
+
+    fn triggers(&self) -> Result<Vec<TriggerInfo>> {
+        let mut client = self.client.lock().unwrap();
+        self.rt.block_on(async {
+            let rows = client
+                .simple_query(
+                    "SELECT TRIGGER_NAME, EVENT_OBJECT_TABLE \
+                     FROM INFORMATION_SCHEMA.TRIGGERS \
+                     WHERE TRIGGER_SCHEMA = 'dbo' \
+                     ORDER BY TRIGGER_NAME",
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("mssql: {e}"))?
+                .into_results()
+                .await
+                .map_err(|e| anyhow::anyhow!("mssql: {e}"))?;
+            Ok(rows
+                .into_iter()
+                .flatten()
+                .filter_map(|r| {
+                    let name: &str = r.get(0)?;
+                    let table: &str = r.get(1).unwrap_or("");
+                    Some(TriggerInfo {
+                        name: name.to_string(),
+                        table: table.to_string(),
+                    })
+                })
                 .collect())
         })
     }

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::{Connection, Database, ExecCtx, ExecutionResult, StatementResult};
+use super::{Connection, Database, ExecCtx, ExecutionResult, StatementResult, TriggerInfo};
 
 /// ponytail: one shared `Client` behind a `Mutex` (the TUI runs one query at a
 /// time — see `CancelSlot`), cloned via `Arc` so `boxed_clone` is cheap and
@@ -140,6 +140,53 @@ impl Database for Postgres {
             }
         }
         Ok(flatten_names(schema_map))
+    }
+
+    fn procedures(&self) -> Result<Vec<String>> {
+        const SQL: &str = "SELECT routine_name FROM information_schema.routines \
+             WHERE specific_schema = current_schema() AND routine_type = 'PROCEDURE' \
+             ORDER BY routine_name";
+        let msgs = self
+            .client
+            .lock()
+            .unwrap()
+            .simple_query(SQL)
+            .map_err(pg_err)?;
+        let mut procs = Vec::new();
+        for m in &msgs {
+            if let postgres::SimpleQueryMessage::Row(r) = m
+                && let Some(p) = r.get(0)
+            {
+                procs.push(p.to_string());
+            }
+        }
+        Ok(procs)
+    }
+
+    fn triggers(&self) -> Result<Vec<TriggerInfo>> {
+        const SQL: &str = "SELECT tgname::text, relname::text \
+             FROM pg_trigger t JOIN pg_class c ON t.tgrelid = c.oid \
+             JOIN pg_namespace n ON c.relnamespace = n.oid \
+             WHERE n.nspname = current_schema() AND NOT t.tgisinternal \
+             ORDER BY tgname";
+        let msgs = self
+            .client
+            .lock()
+            .unwrap()
+            .simple_query(SQL)
+            .map_err(pg_err)?;
+        let mut triggers = Vec::new();
+        for m in &msgs {
+            if let postgres::SimpleQueryMessage::Row(r) = m
+                && let (Some(name), Some(table)) = (r.get(0), r.get(1))
+            {
+                triggers.push(TriggerInfo {
+                    name: name.to_string(),
+                    table: table.to_string(),
+                });
+            }
+        }
+        Ok(triggers)
     }
 
     fn schema(&self) -> Result<HashMap<String, Vec<String>>> {
