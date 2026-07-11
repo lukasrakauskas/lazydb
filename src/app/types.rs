@@ -233,6 +233,50 @@ impl ExportFormat {
     }
 }
 
+// ── Snippet picker ────────────────────────────────────────────────────
+
+#[derive(Clone)]
+pub struct SnippetPicker {
+    pub query: String,
+    pub filtered: Vec<usize>,
+    pub cursor: usize,
+}
+
+impl SnippetPicker {
+    pub fn new(snippets: &[crate::config::Snippet]) -> Self {
+        Self {
+            query: String::new(),
+            filtered: (0..snippets.len()).collect(),
+            cursor: 0,
+        }
+    }
+
+    pub fn set_query(&mut self, query: String, snippets: &[crate::config::Snippet]) {
+        self.query = query;
+        let q = self.query.to_lowercase();
+        self.filtered = snippets
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                s.name.to_lowercase().contains(&q) || s.sql.to_lowercase().contains(&q)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        let max = self.filtered.len().saturating_sub(1);
+        if self.cursor > max {
+            self.cursor = max;
+        }
+    }
+
+    pub fn selected<'a>(
+        &self,
+        snippets: &'a [crate::config::Snippet],
+    ) -> Option<&'a crate::config::Snippet> {
+        let i = *self.filtered.get(self.cursor)?;
+        snippets.get(i)
+    }
+}
+
 // ── Row insert ────────────────────────────────────────────────────────
 
 #[derive(Clone)]

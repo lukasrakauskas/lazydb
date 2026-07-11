@@ -4,6 +4,12 @@ use std::{fs, path::PathBuf, time::Duration};
 
 use crate::db::Connection;
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Snippet {
+    pub name: String,
+    pub sql: String,
+}
+
 /// ponytail: HOME is process-global; serialize tests that mutate it so parallel
 /// `cargo test` threads don't race. Shared across `config::tests` and `app::tests`.
 #[cfg(test)]
@@ -28,6 +34,9 @@ pub struct Config {
     /// Last connected connection index, restored on next launch.
     #[serde(default)]
     pub last_connection: Option<usize>,
+    /// Saved query snippets.
+    #[serde(default)]
+    pub snippets: Vec<Snippet>,
 }
 
 /// Togglable app features, persisted in the config file. Add a field + an
@@ -133,6 +142,7 @@ mod tests {
             select_limit: Some(1000),
             history: Vec::new(),
             last_connection: None,
+            snippets: Vec::new(),
         };
         cfg.save().unwrap();
         let loaded = Config::load();

@@ -92,6 +92,8 @@ pub struct App {
     // ponytail: P2 row delete — shares confirm flow.
     #[allow(dead_code)]
     confirm_row_delete: Option<(usize, String, Vec<String>, Vec<String>)>,
+    // ponytail: PR12 snippet picker - filterable list of saved queries.
+    pub snippet_picker: Option<SnippetPicker>,
     // ponytail: SSH tunnel subprocess — killed on disconnect/drop.
     ssh_tunnel: Option<SshTunnel>,
     // ponytail: PR3 resizable editor — height in terminal rows.
@@ -164,6 +166,7 @@ impl App {
             export_input: None,
             row_insert: None,
             confirm_row_delete: None,
+            snippet_picker: None,
             ssh_tunnel: None,
             editor_height: 8,
             editor_save_input: None,
@@ -549,6 +552,7 @@ impl App {
             self.cell_inspect.is_some(),
             self.editor_save_input.is_some(),
             self.schema_filter_input_open,
+            self.snippet_picker.is_some(),
             self.show_help,
         );
         if self.running_query {
@@ -908,6 +912,14 @@ impl App {
             RowInsertFieldPrev => self.row_insert_field_next(-1),
             // row delete
             RowDelete => self.start_row_delete(),
+            // snippet picker
+            SaveSnippet => self.save_snippet(),
+            LoadSnippet => self.load_snippet(),
+            SnippetPickerClose => self.snippet_picker = None,
+            SnippetPickerSelect => self.snippet_picker_select(),
+            SnippetPickerNext => self.snippet_picker_move(1),
+            SnippetPickerPrev => self.snippet_picker_move(-1),
+            SnippetPickerBackspace => self.snippet_picker_backspace(),
         }
     }
 
@@ -985,6 +997,13 @@ impl App {
                     if let Some(input) = &mut self.editor_save_input {
                         input.path.insert(input.cursor, c);
                         input.cursor += 1;
+                    }
+                }
+                View::SnippetPicker => {
+                    if let Some(picker) = &mut self.snippet_picker {
+                        let mut q = picker.query.clone();
+                        q.push(c);
+                        picker.set_query(q, &self.config.snippets);
                     }
                 }
                 _ => {}
@@ -2267,6 +2286,64 @@ impl App {
             self.execute_tx_sql("BEGIN");
         }
         self.status = format!("Autocommit: {state}");
+    }
+
+    // ── Snippet picker ────────────────────────────────────────────────
+    fn save_snippet(&mut self) {
+        let sql = self.editor.text().trim().to_string();
+        if sql.is_empty() {
+            self.status = "Editor is empty.".into();
+            return;
+        }
+        let name = format!("snip-{}", self.config.snippets.len() + 1);
+        self.config
+            .snippets
+            .push(crate::config::Snippet { name, sql });
+        if let Err(e) = self.config.save() {
+            self.status = format!("Failed to save snippet: {e}");
+        } else {
+            self.status = "Snippet saved.".into();
+        }
+    }
+
+    fn load_snippet(&mut self) {
+        if self.config.snippets.is_empty() {
+            self.status = "No saved snippets.".into();
+            return;
+        }
+        self.snippet_picker = Some(SnippetPicker::new(&self.config.snippets));
+        self.status = "Select a snippet — Enter to load, Esc to cancel.".into();
+    }
+
+    fn snippet_picker_select(&mut self) {
+        let Some(picker) = self.snippet_picker.take() else {
+            return;
+        };
+        let Some(snippet) = picker.selected(&self.config.snippets) else {
+            self.status = "No snippet selected.".into();
+            return;
+        };
+        self.editor = crate::editor::Editor::from_text(snippet.sql.clone());
+        self.focus = Focus::Editor;
+        self.status = format!("Loaded snippet: {}", snippet.name);
+    }
+
+    fn snippet_picker_move(&mut self, dir: isize) {
+        let Some(picker) = &mut self.snippet_picker else {
+            return;
+        };
+        let max = picker.filtered.len().saturating_sub(1);
+        let new = (picker.cursor as isize + dir).clamp(0, max as isize) as usize;
+        picker.cursor = new;
+    }
+
+    fn snippet_picker_backspace(&mut self) {
+        let Some(picker) = &mut self.snippet_picker else {
+            return;
+        };
+        let mut q = picker.query.clone();
+        q.pop();
+        picker.set_query(q, &self.config.snippets);
     }
 }
 
