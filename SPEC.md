@@ -54,11 +54,10 @@
 ### What's half-done
 
 - **Oracle**: No backend exists. Enterprise shops that use Oracle are still out of luck.
-- **Multi-schema browsing (PostgreSQL)**: Schema browser only shows `current_schema()` — tables in other search_path schemas don't appear.
 
 ### What's consciously deferred (ponytail markers)
 
-Single-thread job model, single `Client` behind Mutex (postgres), naive row-delete WHERE (not PK-based), EXPLAIN on first statement only, one schema at a time (postgres), SQLite no cancellation, file-path-only SQLite, multiple connections/tabs, ER diagrams, query builder, theming, keybinding customization, Homebrew tap, telemetry, docs site, Oracle backend, saved queries, multi-tab.
+Single-thread job model, single `Client` behind Mutex (postgres), naive row-delete WHERE (not PK-based), EXPLAIN on first statement only, SQLite no cancellation, file-path-only SQLite, multiple connections/tabs, ER diagrams, query builder, theming, keybinding customization, telemetry, docs site, Oracle backend, multi-tab.
 
 ---
 
@@ -317,14 +316,12 @@ Critical missing test: **no end-to-end test** that starts the TUI, simulates key
 |-------|-------------------|--------|
 | 1 | Connect to a production RDS/CloudSQL instance over SSL through a bastion | ✅ Done |
 | 2 | Use Oracle or SQL Server at their company | 🟡 MSSQL done, Oracle pending |
-| 3 | Browse 1M-row tables without freezing | ❌ Not started |
-| 4 | Resume a session, run a saved query, open multiple tabs | 🟡 History + restore done, snippets + tabs pending |
-| 5 | Export data as CSV/XLSX/INSERT for a colleague | 🟡 CSV/JSON done, XLSX/INSERT pending |
-| 6 | Roll back a mistaken UPDATE with one keystroke | ❌ Not started |
-| 7 | `brew install lazydb` on a company laptop with security team approval | 🟡 cargo-install + binaries done, Homebrew pending |
-| 8 | Prefer lazydb over their previous tool | ❌ Phase 3-6 items block this |
-
-**Next priority**: Phase 3 (result-set performance at scale) — the biggest remaining UX gap.
+| 3 | Browse 1M-row tables without freezing | ✅ Virtual scrolling (width calc capped at 1000 rows) |
+| 4 | Resume a session, run a saved query, open multiple tabs | 🟡 History + restore + snippets done, tabs pending |
+| 5 | Export data as CSV/XLSX/INSERT for a colleague | ✅ CSV/JSON/XLSX/INSERT all done |
+| 6 | Roll back a mistaken UPDATE with one keystroke | ✅ Begin/commit/rollback hotkeys, autocommit toggle |
+| 7 | `brew install lazydb` on a company laptop with security team approval | 🟡 cargo-install + binaries + formula done, tap pending |
+| 8 | Prefer lazydb over their previous tool | 🟡 Phases 1-7 mostly done; PG streaming, page-size, Oracle, tabs remain |
 
 ---
 
