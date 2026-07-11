@@ -133,7 +133,10 @@ impl Database for Postgres {
             if let postgres::SimpleQueryMessage::Row(r) = m
                 && let (Some(s), Some(v)) = (r.get(0), r.get(1))
             {
-                schema_map.entry(s.to_string()).or_default().push(v.to_string());
+                schema_map
+                    .entry(s.to_string())
+                    .or_default()
+                    .push(v.to_string());
             }
         }
         Ok(flatten_names(schema_map))
