@@ -98,6 +98,8 @@ pub struct App {
     pub editor_height: u16,
     // ponytail: PR3 save-editor path input.
     pub editor_save_input: Option<ExportInput>,
+    // ponytail: PR14 autocommit state (true = each statement commits immediately).
+    pub autocommit: bool,
 }
 
 impl App {
@@ -165,6 +167,7 @@ impl App {
             ssh_tunnel: None,
             editor_height: 8,
             editor_save_input: None,
+            autocommit: true,
         })
     }
 
@@ -779,6 +782,10 @@ impl App {
             ExplainQuery => self.explain_query(),
             AdjustEditorHeightUp => self.adjust_editor_height(1),
             AdjustEditorHeightDown => self.adjust_editor_height(-1),
+            BeginTx => self.execute_tx_sql("BEGIN"),
+            CommitTx => self.execute_tx_sql("COMMIT"),
+            RollbackTx => self.execute_tx_sql("ROLLBACK"),
+            ToggleAutocommit => self.toggle_autocommit(),
             SaveBufferAccept => self.confirm_save_buffer(),
             SaveBufferCancel => self.cancel_save_buffer(),
 
@@ -2224,6 +2231,29 @@ impl App {
         let new = (self.editor_height as i32 + dir * 2).clamp(3, 40);
         self.editor_height = new as u16;
         self.status = format!("Editor height: {}", self.editor_height);
+    }
+
+    // ── Transaction control ─────────────────────────────────────────
+    fn execute_tx_sql(&mut self, sql: &str) {
+        let Some(db) = &self.db else {
+            self.status = "Not connected.".into();
+            return;
+        };
+        let db = db.boxed_clone();
+        let sql = sql.to_string();
+        self.status = format!("{sql}…");
+        self.rx = Some(spawn_job(Job::Query(db, sql, self.exec_ctx(false))));
+        self.running_query = true;
+    }
+
+    fn toggle_autocommit(&mut self) {
+        self.autocommit = !self.autocommit;
+        let state = if self.autocommit { "ON" } else { "OFF" };
+        if !self.autocommit {
+            // Execute BEGIN to start a manual transaction
+            self.execute_tx_sql("BEGIN");
+        }
+        self.status = format!("Autocommit: {state}");
     }
 }
 
