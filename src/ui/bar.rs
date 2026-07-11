@@ -46,7 +46,8 @@ pub(crate) fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     } else {
         ""
     };
-    let left = format!(" {conn}{spinner} | {} ", app.status);
+    let autocommit = if !app.autocommit { " [TX]" } else { "" };
+    let left = format!(" {conn}{autocommit}{spinner} | {} ", app.status);
     let right = if app.debug_keys {
         format!(" {} ", app.last_key.as_deref().unwrap_or("(none)"))
     } else {

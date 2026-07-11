@@ -97,6 +97,11 @@ pub enum Action {
     SaveBufferAccept,
     SaveBufferCancel,
     // autocomplete popup (editor sub-mode)
+    // transaction control
+    BeginTx,
+    CommitTx,
+    RollbackTx,
+    ToggleAutocommit,
     AcceptCompletion,
     CompletionNext,
     CompletionPrev,
@@ -507,6 +512,30 @@ static EDITOR: &[Binding] = &[
         keys: &[ctrl_code(KeyCode::Down, "Ctrl+↓")],
         label: "resize↓",
         action: Action::AdjustEditorHeightDown,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ctrl('b', "Ctrl+B")],
+        label: "begin",
+        action: Action::BeginTx,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ctrl('d', "Ctrl+D")],
+        label: "commit",
+        action: Action::CommitTx,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ctrl('z', "Ctrl+Z")],
+        label: "rollback",
+        action: Action::RollbackTx,
+        hidden: false,
+    },
+    Binding {
+        keys: &[ctrl('a', "Ctrl+A")],
+        label: "autocommit",
+        action: Action::ToggleAutocommit,
         hidden: false,
     },
 ];
