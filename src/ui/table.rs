@@ -81,11 +81,16 @@ pub(crate) fn draw_table(
     sort: SortState,
 ) -> (usize, usize, ResultsClickGeom) {
     let ncol = columns.len();
+    let width_scan = if rows.len() > 1000 {
+        &rows[..1000]
+    } else {
+        rows
+    };
     let widths: Vec<usize> = columns
         .iter()
         .enumerate()
         .map(|(c, col)| {
-            let cell_max = rows
+            let cell_max = width_scan
                 .iter()
                 .filter_map(|r| r.get(c))
                 .map(|s| s.chars().count())
